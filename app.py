@@ -14,8 +14,9 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8831964761:AAFA8OyHWniT5RlPBpSItoszKei2ahO_U8U")
 WEBHOOK_SECRET = os.getenv("PANEL_WEBHOOK_SECRET", "")
 
-# Your Live API Key Integration
-LIVE_SECRET_API_KEY = "Sk_live_5OMGmu5v4UY3pXjDokxOtOVaba25WSi55cfYrc3h"
+# Your Live API Key & Base URL for IPRN
+IPRN_API_KEY = "Sk_live_5OMGmu5v4UY3pXjDokxOtOVaba25WSi55cfYrc3h"
+IPRN_BASE_URL = "https://www.ksiiprn.com/api/v1/iprn"
 
 OTP_GROUP_ID = os.getenv("OTP_GROUP_ID", "")
 ADMIN_CHAT_IDS = ["8745487398"] 
@@ -38,6 +39,23 @@ def send_telegram(chat_id, text, reply_markup=None):
     except Exception as e:
         print(f"Error sending msg: {e}")
         return False
+
+# IPRN API থেকে অ্যাসাইন করা নম্বর ফেচ করার ফাংশন
+def fetch_iprn_numbers_from_api():
+    url = f"{IPRN_BASE_URL}/numbers"
+    headers = {
+        "Authorization": f"Bearer {IPRN_API_KEY}",
+        "Accept": "application/json"
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            res_data = response.json()
+            if res_data.get("success"):
+                return res_data.get("data", [])
+    except Exception as e:
+        print(f"IPRN API Fetch Error: {e}")
+    return []
 
 def get_setting(key, default=""):
     try:
@@ -63,7 +81,7 @@ def is_user_banned(chat_id):
 
 @app.route('/')
 def home():
-    return "🚀 AsrPay Professional Master Server Running with Live API!", 200
+    return "🚀 AsrPay Professional Master Server Running with IPRN API!", 200
 
 # ------------------- 1. API & SMS WEBHOOK -------------------
 @app.route('/webhook', methods=['POST'])
@@ -194,14 +212,28 @@ def bot_webhook():
                     send_telegram(chat_id, "⚠️ *দুঃখিত! বর্তমানে নম্বর সার্ভিস সাময়িকভাবে বন্ধ আছে।*")
                     return "OK", 200
 
-                menu = {
-                    "inline_keyboard": [
-                        [{"text": "🎵 TikTok", "callback_data": "get_tiktok"}, {"text": "🍏 Apple", "callback_data": "get_apple"}],
-                        [{"text": "💬 WhatsApp", "callback_data": "get_whatsapp"}, {"text": "✈️ Telegram", "callback_data": "get_telegram"}],
-                        [{"text": "📘 Facebook", "callback_data": "get_facebook"}, {"text": "🌐 Other", "callback_data": "get_other"}]
-                    ]
-                }
-                send_telegram(chat_id, "📱 *AsrPay - আপনার প্রয়োজনীয় সার্ভিসটি সিলেক্ট করুন:*", reply_markup=menu)
+                # সরাসরি IPRN API থেকে একটি ফ্রি নম্বর অটো ফেচ করে অ্যাসাইন করার চেষ্টা করা যেতে পারে
+                iprn_numbers = fetch_iprn_numbers_from_api()
+                if iprn_numbers:
+                    assigned_num = iprn_numbers[0].get("number")
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    
+                    supabase.from_('numbers').upsert({
+                        'phone_number': assigned_num,
+                        'chat_id': chat_id,
+                        'assigned_at': now_iso
+                    }).execute()
+                    
+                    send_telegram(chat_id, f"✅ *Successful!* আপনার জন্য নম্বর অ্যাসাইন করা হয়েছে:\n\n📱 Number: `{assigned_num}`\n⏳ মেয়াদ: ৫ মিনিট। এর মধ্যে SMS আসলে এখানে দেখতে পাবেন।")
+                else:
+                    menu = {
+                        "inline_keyboard": [
+                            [{"text": "🎵 TikTok", "callback_data": "get_tiktok"}, {"text": "🍏 Apple", "callback_data": "get_apple"}],
+                            [{"text": "💬 WhatsApp", "callback_data": "get_whatsapp"}, {"text": "✈️ Telegram", "callback_data": "get_telegram"}],
+                            [{"text": "📘 Facebook", "callback_data": "get_facebook"}, {"text": "🌐 Other", "callback_data": "get_other"}]
+                        ]
+                    }
+                    send_telegram(chat_id, "📱 *AsrPay - আপনার প্রয়োজনীয় সার্ভিসটি সিলেক্ট করুন:*", reply_markup=menu)
 
             elif text in ["💳 Balance", "/balance"]:
                 bal = 0.00
@@ -221,8 +253,7 @@ def bot_webhook():
                     f"💳 *AsrPay Account Overview*\n\n"
                     f"👤 *User ID:* `{chat_id}`\n"
                     f"💰 *Current Balance:* `${bal:.2f} USD`\n"
-                    f"🎯 *Minimum Withdraw:* `${MIN_WITHDRAWAL_USD:.2f} USD`\n\n"
-                    f"উইথড্র করতে নিচের *Request Withdraw* বাটনে ক্লিক করুন:"
+                    f"🎯 *Minimum Withdraw:* `${MIN_WITHDRAWAL_USD:.2f} USD`"
                 )
                 send_telegram(chat_id, bal_msg, reply_markup=balance_inline_btn)
 
@@ -230,9 +261,8 @@ def bot_webhook():
                 ref_link = f"https://t.me/AsrPay_Bot?start={chat_id}"
                 ref_msg = (
                     f"💎 *AsrPay Referral Program*\n\n"
-                    f"আপনার রেফারেল লিংক শেয়ার করে বন্ধুদের ইনভাইট করুন!\n\n"
                     f"🔗 *লিংক:* `{ref_link}`\n\n"
-                    f"🎁 *রিওয়ার্ড:* আপনার রেফারকৃত ইউজার $১ আয় করলে পাবেন ঠিক *{REFERRAL_BONUS_BDT} BDT* বোনাস!"
+                    f"🎁 *রিওয়ার্ড:* আপনার রেফারকৃত ইউজার $১ আয় করলে পাবেন *{REFERRAL_BONUS_BDT} BDT* বোনাস!"
                 )
                 send_telegram(chat_id, ref_msg)
 
@@ -248,11 +278,7 @@ def bot_webhook():
                     support_buttons.append([{"text": "📢 Official Group", "url": support_group}])
 
                 reply_markup = {"inline_keyboard": support_buttons} if support_buttons else None
-                sup_msg = (
-                    "🎧 *AsrPay Support Center*\n\n"
-                    "আপনার যেকোনো সমস্যা বা অনুসন্ধানের জন্য সরাসরি যোগাযোগ করুন:"
-                )
-                send_telegram(chat_id, sup_msg, reply_markup=reply_markup)
+                send_telegram(chat_id, "🎧 *AsrPay Support Center*\n\nযেকোনো সমস্যায় যোগাযোগ করুন:", reply_markup=reply_markup)
 
             elif chat_id in user_wd_state:
                 method = user_wd_state.pop(chat_id)
@@ -328,12 +354,12 @@ def bot_webhook():
             elif data == "admin_on":
                 if str(chat_id) in ADMIN_CHAT_IDS:
                     supabase.from_('settings').upsert({'key': 'service_status', 'value': 'ON'}).execute()
-                    send_telegram(chat_id, "✅ সার্ভিস চালু (ON) করা হয়েছে!")
+                    send_telegram(chat_id, "✅ সার্ভিস চালু (ON) করা হয়েছে!")
 
             elif data == "admin_off":
                 if str(chat_id) in ADMIN_CHAT_IDS:
                     supabase.from_('settings').upsert({'key': 'service_status', 'value': 'OFF'}).execute()
-                    send_telegram(chat_id, "❌ সার্ভিস বন্ধ (OFF) করা হয়েছে!")
+                    send_telegram(chat_id, "❌ সার্ভিস বন্ধ (OFF) করা হয়েছে!")
 
             elif data == "admin_users_list":
                 if str(chat_id) in ADMIN_CHAT_IDS:
@@ -366,7 +392,22 @@ def bot_webhook():
                     return "OK", 200
 
                 service = data.replace("get_", "").upper()
-                send_telegram(chat_id, f"✅ *Selected Service:* `{service}`\n\nঅ্যাডমিন প্যানেল থেকে নম্বর অ্যাসাইন হওয়া পর্যন্ত অপেক্ষা করুন... (মেয়াদ: ৫ মিনিট)")
+                
+                # IPRN API থেকে সরাসরি নম্বর ফেচ করার চেষ্টা
+                iprn_numbers = fetch_iprn_numbers_from_api()
+                if iprn_numbers:
+                    assigned_num = iprn_numbers[0].get("number")
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    
+                    supabase.from_('numbers').upsert({
+                        'phone_number': assigned_num,
+                        'chat_id': chat_id,
+                        'assigned_at': now_iso
+                    }).execute()
+                    
+                    send_telegram(chat_id, f"✅ *Service:* `{service}`\n\n📱 Assigned Number: `{assigned_num}`\n⏳ মেয়াদ: ৫ মিনিট।")
+                else:
+                    send_telegram(chat_id, f"✅ *Selected Service:* `{service}`\n\nঅ্যাডমিন প্যানেল থেকে নম্বর অ্যাসাইন হওয়া পর্যন্ত অপেক্ষা করুন...")
 
     except Exception as main_e:
         print(f"Bot Webhook Error: {main_e}")
@@ -393,13 +434,7 @@ ADMIN_HTML = """
         .btn-on { background: #10b981; } 
         .btn-off { background: #ef4444; } 
         .btn-primary { background: #0284c7; } 
-        .btn-danger { background: #dc2626; padding: 6px 10px; font-size: 12px; display: inline-block; width: auto; }
-        .btn-success { background: #059669; padding: 6px 10px; font-size: 12px; display: inline-block; width: auto; }
         input { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #475569; background: #0f172a; color: white; border-radius: 8px; font-size: 14px; }
-        .table-responsive { width: 100%; overflow-x: auto; margin-top: 10px; }
-        table { width: 100%; border-collapse: collapse; min-width: 300px; }
-        th, td { border: 1px solid #334155; padding: 8px; text-align: left; font-size: 12px; white-space: nowrap; }
-        th { background: #0f172a; color: #94a3b8; }
     </style>
 </head>
 <body>
@@ -424,7 +459,7 @@ ADMIN_HTML = """
         </form>
     </div>
     <div class="card">
-        <h3>Assign Number</h3>
+        <h3>Assign Number Manually</h3>
         <form action="/admin/assign-number" method="POST">
             <input type="text" name="phone_number" placeholder="Phone Number" required>
             <input type="text" name="chat_id" placeholder="Telegram Chat ID" required>
@@ -454,7 +489,7 @@ def manage_user():
     if res and res.data:
         new_bal = float(res.data[0].get('balance', 0.0)) + amount
         supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
-        send_telegram(chat_id, f"💳 আপনার অ্যাকাউন্টে ব্যালেন্স আপডেট হয়েছে। নতুন ব্যালেন্স: `${new_bal:.2f}`")
+        send_telegram(chat_id, f"💳 আপনার অ্যাকাউন্টে ব্যালেন্স আপডেট হয়েছে। নতুন ব্যালেন্স: `${new_bal:.2f}`")
     return "Updated! <br><a href='/admin'>Go Back</a>"
 
 @app.route('/admin/assign-number', methods=['POST'])
@@ -469,4 +504,3 @@ def assign_number():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, threaded=True)
-
