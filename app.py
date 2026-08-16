@@ -8,15 +8,11 @@ from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# Credentials & Database Configuration
 SUPABASE_URL = "https://mfrmudgpjjonycdrvlhe.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1mcm11ZGdwampvbnljZHJ2bGhlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4NzI4NDksImV4cCI6MjEwMjQ0ODg0OX0.gjsVOT0TKdiHJVcEkp5SuJklq65XQVQKzjQ0SmS5l2Q"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8831964761:AAFA8OyHWniT5RlPBpSItoszKei2ahO_U8U")
 WEBHOOK_SECRET = os.getenv("PANEL_WEBHOOK_SECRET", "")
-
-# Your Live API Key & Base URL for IPRN
-IPRN_API_KEY = "Sk_live_5OMGmu5v4UY3pXjDokxOtOVaba25WSi55cfYrc3h"
-IPRN_BASE_URL = "https://www.ksiiprn.com/api/v1/iprn"
+LIVE_SECRET_API_KEY = "Sk_live_5OMGmu5v4UY3pXjDokxOtOVaba25WSi55cfYrc3h"
 
 OTP_GROUP_ID = os.getenv("OTP_GROUP_ID", "")
 ADMIN_CHAT_IDS = ["8745487398"] 
@@ -39,23 +35,6 @@ def send_telegram(chat_id, text, reply_markup=None):
     except Exception as e:
         print(f"Error sending msg: {e}")
         return False
-
-# IPRN API থেকে অ্যাসাইন করা নম্বর ফেচ করার ফাংশন
-def fetch_iprn_numbers_from_api():
-    url = f"{IPRN_BASE_URL}/numbers"
-    headers = {
-        "Authorization": f"Bearer {IPRN_API_KEY}",
-        "Accept": "application/json"
-    }
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            res_data = response.json()
-            if res_data.get("success"):
-                return res_data.get("data", [])
-    except Exception as e:
-        print(f"IPRN API Fetch Error: {e}")
-    return []
 
 def get_setting(key, default=""):
     try:
@@ -81,26 +60,30 @@ def is_user_banned(chat_id):
 
 @app.route('/')
 def home():
-    return "🚀 AsrPay Professional Master Server Running with IPRN API!", 200
+    return "🚀 AsrPay Professional Master Server Running with Webhook Events!", 200
 
-# ------------------- 1. API & SMS WEBHOOK -------------------
+# ------------------- WEBHOOK ENDPOINT (ALL EVENTS HANDLER) -------------------
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     try:
         raw_data = request.get_data()
         signature = request.headers.get('X-KSIIPRNTECHNOLOGY-Signature', '')
         
+        # ডকুমেন্টেশন অনুযায়ী HMAC-SHA256 সিগনেচার ভেরিফিকেশন
         if WEBHOOK_SECRET:
             expected_sig = 'sha256=' + hmac.new(WEBHOOK_SECRET.encode(), raw_data, hashlib.sha256).hexdigest()
             if not hmac.compare_digest(expected_sig, signature):
                 return "Unauthorized", 401
 
         data = request.get_json(silent=True) or {}
-        if data.get('event') == 'message.received':
-            sms_data = data.get('data', {})
-            number = sms_data.get('number')
-            message_text = sms_data.get('message')
-            source = sms_data.get('source', 'Unknown')
+        event_type = data.get('event')
+        event_data = data.get('data', {})
+
+        # ১. message.received ইভেন্ট (যখন কোনো নম্বরে ওটিপি বা এসএমএস আসে)
+        if event_type == 'message.received':
+            number = event_data.get('number')
+            message_text = event_data.get('message')
+            source = event_data.get('source', 'Unknown')
 
             num_query = supabase.from_('numbers').select('chat_id, assigned_at').eq('phone_number', number).execute()
             
@@ -154,9 +137,34 @@ def handle_webhook():
                 if OTP_GROUP_ID:
                     group_msg = f"🔥 *[AsrPay] NEW OTP ARRIVED*\n📱 *Number:* `{number[:-4]}****`\n🌐 *Service:* {source}\n💬 *SMS:* {message_text}"
                     send_telegram(OTP_GROUP_ID, group_msg)
+
+        # ২. number.assigned ইভেন্ট (যখন নতুন কোনো নম্বর অ্যাকাউন্টে যোগ হয়)
+        elif event_type == 'number.assigned':
+            assigned_num = event_data.get('number')
+            range_name = event_data.get('range_name')
+            print(f"Number Assigned Event Received: {assigned_num} ({range_name})")
+
+        # ৩. number.removed ইভেন্ট (নম্বর অ্যাকাউন্ট থেকে চলে গেলে)
+        elif event_type == 'number.removed':
+            removed_num = event_data.get('number')
+            print(f"Number Removed Event Received: {removed_num}")
+
+        # ৪. earnings.daily ইভেন্ট (প্রতিদিন ০০:০০ UTC তে বিগত দিনের আয়ের সামারি)
+        elif event_type == 'earnings.daily':
+            date = event_data.get('date')
+            earnings = event_data.get('earnings')
+            messages = event_data.get('messages')
+            print(f"Daily Earnings Summary [{date}]: Messages: {messages}, Earned: ${earnings}")
+            
+            # চাইলে এডমিন গ্রুপে বা আইডিতে ডেইলি সামারি পাঠিয়ে দিতে পারেন
+            if ADMIN_CHAT_IDS:
+                summary_msg = f"📊 *Daily Earnings Summary ({date})*\n\n📩 Total Messages: `{messages}`\n💰 Total Earnings: `${earnings} USD`"
+                send_telegram(ADMIN_CHAT_IDS[0], summary_msg)
+
     except Exception as e:
         print(f"Webhook processing error: {e}")
 
+    # ডকুমেন্টেশন অনুযায়ী ৫ সেকেন্ডের মধ্যে 200 OK রেসপন্স রিটার্ন করতে হবে
     return "OK", 200
 
 user_wd_state = {}
@@ -212,28 +220,14 @@ def bot_webhook():
                     send_telegram(chat_id, "⚠️ *দুঃখিত! বর্তমানে নম্বর সার্ভিস সাময়িকভাবে বন্ধ আছে।*")
                     return "OK", 200
 
-                # সরাসরি IPRN API থেকে একটি ফ্রি নম্বর অটো ফেচ করে অ্যাসাইন করার চেষ্টা করা যেতে পারে
-                iprn_numbers = fetch_iprn_numbers_from_api()
-                if iprn_numbers:
-                    assigned_num = iprn_numbers[0].get("number")
-                    now_iso = datetime.now(timezone.utc).isoformat()
-                    
-                    supabase.from_('numbers').upsert({
-                        'phone_number': assigned_num,
-                        'chat_id': chat_id,
-                        'assigned_at': now_iso
-                    }).execute()
-                    
-                    send_telegram(chat_id, f"✅ *Successful!* আপনার জন্য নম্বর অ্যাসাইন করা হয়েছে:\n\n📱 Number: `{assigned_num}`\n⏳ মেয়াদ: ৫ মিনিট। এর মধ্যে SMS আসলে এখানে দেখতে পাবেন।")
-                else:
-                    menu = {
-                        "inline_keyboard": [
-                            [{"text": "🎵 TikTok", "callback_data": "get_tiktok"}, {"text": "🍏 Apple", "callback_data": "get_apple"}],
-                            [{"text": "💬 WhatsApp", "callback_data": "get_whatsapp"}, {"text": "✈️ Telegram", "callback_data": "get_telegram"}],
-                            [{"text": "📘 Facebook", "callback_data": "get_facebook"}, {"text": "🌐 Other", "callback_data": "get_other"}]
-                        ]
-                    }
-                    send_telegram(chat_id, "📱 *AsrPay - আপনার প্রয়োজনীয় সার্ভিসটি সিলেক্ট করুন:*", reply_markup=menu)
+                menu = {
+                    "inline_keyboard": [
+                        [{"text": "🎵 TikTok", "callback_data": "get_tiktok"}, {"text": "🍏 Apple", "callback_data": "get_apple"}],
+                        [{"text": "💬 WhatsApp", "callback_data": "get_whatsapp"}, {"text": "✈️ Telegram", "callback_data": "get_telegram"}],
+                        [{"text": "📘 Facebook", "callback_data": "get_facebook"}, {"text": "🌐 Other", "callback_data": "get_other"}]
+                    ]
+                }
+                send_telegram(chat_id, "📱 *AsrPay - আপনার প্রয়োজনীয় সার্ভিসটি সিলেক্ট করুন:*", reply_markup=menu)
 
             elif text in ["💳 Balance", "/balance"]:
                 bal = 0.00
@@ -311,8 +305,7 @@ def bot_webhook():
                     admin_inline_keyboard = {
                         "inline_keyboard": [
                             [{"text": "🟢 Turn ON Service", "callback_data": "admin_on"}, {"text": "🔴 Turn OFF Service", "callback_data": "admin_off"}],
-                            [{"text": "👥 Registered Users", "callback_data": "admin_users_list"}],
-                            [{"text": "📊 Recent OTP Logs", "callback_data": "admin_logs"}]
+                            [{"text": "👥 Registered Users", "callback_data": "admin_users_list"}, {"text": "📊 Recent OTP Logs", "callback_data": "admin_logs"}]
                         ]
                     }
                     send_telegram(chat_id, "👑 *AsrPay Telegram Admin Panel*", reply_markup=admin_inline_keyboard)
@@ -392,22 +385,7 @@ def bot_webhook():
                     return "OK", 200
 
                 service = data.replace("get_", "").upper()
-                
-                # IPRN API থেকে সরাসরি নম্বর ফেচ করার চেষ্টা
-                iprn_numbers = fetch_iprn_numbers_from_api()
-                if iprn_numbers:
-                    assigned_num = iprn_numbers[0].get("number")
-                    now_iso = datetime.now(timezone.utc).isoformat()
-                    
-                    supabase.from_('numbers').upsert({
-                        'phone_number': assigned_num,
-                        'chat_id': chat_id,
-                        'assigned_at': now_iso
-                    }).execute()
-                    
-                    send_telegram(chat_id, f"✅ *Service:* `{service}`\n\n📱 Assigned Number: `{assigned_num}`\n⏳ মেয়াদ: ৫ মিনিট।")
-                else:
-                    send_telegram(chat_id, f"✅ *Selected Service:* `{service}`\n\nঅ্যাডমিন প্যানেল থেকে নম্বর অ্যাসাইন হওয়া পর্যন্ত অপেক্ষা করুন...")
+                send_telegram(chat_id, f"✅ *Selected Service:* `{service}`\n\nঅ্যাডমিন প্যানেল থেকে নম্বর অ্যাসাইন হওয়া পর্যন্ত অপেক্ষা করুন...")
 
     except Exception as main_e:
         print(f"Bot Webhook Error: {main_e}")
