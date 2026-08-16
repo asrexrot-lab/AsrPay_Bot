@@ -2,4 +2,4 @@ Flask
 requests
 supabase
 gunicorn
-gunicorn app:app
+
