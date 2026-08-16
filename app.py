@@ -51,7 +51,6 @@ def handle_webhook():
         source = d.get('source')
         message_text = d.get('message')
 
-        # ডাটাবেজ চেক করা কোন ইউজার এই নম্বরটি নিয়েছিল
         try:
             num_res = supabase.from_('numbers_assigned').select('*').eq('phone_number', number).eq('status', 'active').execute()
             if num_res and num_res.data:
@@ -59,21 +58,17 @@ def handle_webhook():
                 chat_id = info.get('chat_id')
                 rate = float(info.get('rate', 0.05))
 
-                # ইউজারের ব্যালেন্স আপডেট করা
                 user_res = supabase.from_('users').select('balance').eq('chat_id', chat_id).execute()
                 if user_res and user_res.data:
                     curr_bal = float(user_res.data[0].get('balance', 0.0))
                     new_bal = curr_bal + rate
                     supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
 
-                    # নির্দিষ্ট ইউজারের ইনবক্সে ওটিপি পাঠানো
                     msg = f"📩 *New OTP Received!*\n\n📱 Number: `{number}`\n🌐 Service: `{source}`\n💬 Message: `{message_text}`\n\n💵 Earned: `+${rate:.2f}`"
                     send_telegram(chat_id, msg)
 
-                    # নম্বরটি ইউজ হয়ে গেছে তাই ইনঅ্যাক্টিভ করা
                     supabase.from_('numbers_assigned').update({'status': 'used'}).eq('phone_number', number).execute()
 
-                    # টেলিগ্রাম গ্রুপে নোটিশ পাঠানো
                     if OTP_GROUP_ID:
                         group_msg = f"🔥 *OTP Delivered*\n📱 Number: `{number[:-4]}****`\n🌐 Service: {source}\n💬 SMS: {message_text}"
                         send_telegram(OTP_GROUP_ID, group_msg)
@@ -86,12 +81,19 @@ def handle_webhook():
 @app.route('/bot-webhook', methods=['POST'])
 def bot_webhook():
     update = request.get_json(silent=True) or {}
+    
+    # সাধারণ টেক্সট মেসেজ হ্যান্ডেল করা
     if "message" in update:
         chat_id = update["message"]["chat"]["id"]
         text = update["message"].get("text", "")
 
         if text.startswith("/start"):
-            send_telegram(chat_id, "✨ *Welcome to AsrPay OTP Bot!*\n\nসার্ভিস পেতে নিচের মেনু ব্যবহার করুন:")
+            menu_markup = {
+                "inline_keyboard": [
+                    [{"text": "📥 Get Number", "callback_data": "get_number"}, {"text": "💰 My Balance", "callback_data": "my_balance"}]
+                ]
+            }
+            send_telegram(chat_id, "✨ *Welcome to AsrPay OTP Bot!*\n\nনম্বর নিতে বা ব্যালেন্স দেখতে নিচের মেনু ব্যবহার করুন:", reply_markup=menu_markup)
         
         elif text.startswith("/admin"):
             if str(chat_id) == str(ADMIN_CHAT_ID):
@@ -105,9 +107,48 @@ def bot_webhook():
             else:
                 send_telegram(chat_id, "❌ আপনার এই কমান্ড ব্যবহারের অনুমতি নেই!")
 
+    # ইনলাইন বাটন ক্লিক (Callback Query) হ্যান্ডেল করা
+    elif "callback_query" in update:
+        query = update["callback_query"]
+        chat_id = query["message"]["chat"]["id"]
+        data = query["data"]
+
+        if data == "get_number":
+            # ডাটাবেজ থেকে একটি ফ্রী বা অ্যাক্টিভ নম্বর এনে দেওয়ার লজিক
+            try:
+                num_check = supabase.from_('numbers_pool').select('*').eq('status', 'available').limit(1).execute()
+                if num_check and num_check.data:
+                    num_data = num_check.data[0]
+                    phone = num_data.get('phone_number')
+                    rate = num_data.get('rate', 0.05)
+
+                    # ইউজারের নামে নম্বরটি অ্যাসাইন করা হলো
+                    supabase.from_('numbers_pool').update({'status': 'assigned'}).eq('phone_number', phone).execute()
+                    supabase.from_('numbers_assigned').insert({'chat_id': str(chat_id), 'phone_number': phone, 'status': 'active', 'rate': rate}).execute()
+
+                    send_telegram(chat_id, f"📱 *Your Number is Ready!*\n\nNumber: `{phone}`\nRate: `${rate}`\n\nএখন এই নম্বরে ওটিপি পাঠান, কোድ আসলে এখানে চলে আসবে।")
+                else:
+                    send_telegram(chat_id, "⚠️ দুঃখিত, বর্তমানে কোনো নম্বর খালি নেই। একটু পরে আবার চেষ্টা করুন।")
+            except Exception as e:
+                send_telegram(chat_id, f"❌ Error fetching number: {e}")
+
+        elif data == "my_balance":
+            try:
+                user_res = supabase.from_('users').select('balance').eq('chat_id', str(chat_id)).execute()
+                balance = 0.0
+                if user_res and user_res.data:
+                    balance = float(user_res.data[0].get('balance', 0.0))
+                else:
+                    # যদি ইউজারের রেকর্ড না থাকে তবে তৈরি করা
+                    supabase.from_('users').insert({'chat_id': str(chat_id), 'balance': 0.0}).execute()
+                
+                send_telegram(chat_id, f"💰 *Your Current Balance:* `${balance:.2f}`")
+            except Exception as e:
+                send_telegram(chat_id, f"❌ Error checking balance: {e}")
+
     return "ok", 200
 
-# ------------------- 3. WEB ADMIN PANEL (MOBILE FRIENDLY) -------------------
+# ------------------- 3. WEB ADMIN PANEL -------------------
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html lang="bn">
@@ -128,25 +169,16 @@ ADMIN_HTML = """
     <h2>👑 AsrPay Admin Dashboard</h2>
     
     <div class="card">
-        <h3>➕ Add / Manage Section (Category)</h3>
-        <form action="/admin/add-section" method="POST">
-            <input type="text" name="section_name" placeholder="Section Name (e.g. TikTok, Facebook)" required>
-            <button class="btn">Add Section</button>
+        <h3>➕ Add Number to Pool</h3>
+        <form action="/admin/add-number" method="POST">
+            <input type="text" name="phone_number" placeholder="Phone Number (e.g. +123456789)" required>
+            <input type="number" step="0.01" name="rate" placeholder="Rate (USD)" required>
+            <button class="btn">Add Number</button>
         </form>
     </div>
 
     <div class="card">
-        <h3>🌍 Add Country & Rate</h3>
-        <form action="/admin/add-country" method="POST">
-            <input type="text" name="section_name" placeholder="Section Name (e.g. TikTok)" required>
-            <input type="text" name="country_name" placeholder="Country Name (e.g. USA, UK)" required>
-            <input type="number" step="0.01" name="rate" placeholder="Rate (USD per SMS)" required>
-            <button class="btn">Save Country & Rate</button>
-        </form>
-    </div>
-
-    <div class="card">
-        <h3>📢 Send Notice to Bot / Group</h3>
+        <h3>📢 Send Notice to Group</h3>
         <form action="/admin/broadcast" method="POST">
             <input type="text" name="notice_text" placeholder="Notice Message..." required>
             <button class="btn">Broadcast Notice</button>
@@ -159,6 +191,16 @@ ADMIN_HTML = """
 @app.route('/admin')
 def admin_dashboard():
     return render_template_string(ADMIN_HTML)
+
+@app.route('/admin/add-number', methods=['POST'])
+def add_number():
+    phone = request.form.get('phone_number')
+    rate = float(request.form.get('rate', 0.05))
+    try:
+        supabase.from_('numbers_pool').insert({'phone_number': phone, 'status': 'available', 'rate': rate}).execute()
+        return "Number Added Successfully! <br><br><a href='/admin'>⬅️ Go Back</a>"
+    except Exception as e:
+        return f"Error: {e} <br><br><a href='/admin'>⬅️ Go Back</a>"
 
 @app.route('/admin/broadcast', methods=['POST'])
 def broadcast_notice():
