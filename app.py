@@ -38,157 +38,156 @@ def send_telegram(chat_id, text, reply_markup=None):
 def check_service_status():
     try:
         res = supabase.from_('settings').select('value').eq('key', 'service_status').execute()
-        if hasattr(res, 'data') and res.data:
+        if res and hasattr(res, 'data') and res.data:
             return res.data[0].get('value') == 'ON'
     except Exception as e:
-        print(f"Supabase check error: {e}")
+        print(f"Service status check bypass: {e}")
     return True
 
 @app.route('/')
 def home():
-    return "AsrPay Master Server & Admin Panel Running!", 200
+    return "AsrPay Master Server Running!", 200
 
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
-    raw_data = request.get_data()
-    signature = request.headers.get('X-KSIIPRNTECHNOLOGY-Signature', '')
-    
-    if WEBHOOK_SECRET:
-        expected_sig = 'sha256=' + hmac.new(WEBHOOK_SECRET.encode(), raw_data, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected_sig, signature):
-            return "Unauthorized", 401
-
-    data = request.get_json(silent=True) or {}
-    if data.get('event') == 'message.received':
-        sms_data = data.get('data', {})
-        number = sms_data.get('number')
-        message_text = sms_data.get('message')
-        source = sms_data.get('source', 'Unknown')
-
-        num_query = supabase.table('numbers').select('chat_id, assigned_at').eq('phone_number', number).execute()
+    try:
+        raw_data = request.get_data()
+        signature = request.headers.get('X-KSIIPRNTECHNOLOGY-Signature', '')
         
-        if num_query.data:
-            num_info = num_query.data[0]
-            chat_id = num_info['chat_id']
-            assigned_at_str = num_info.get('assigned_at')
+        if WEBHOOK_SECRET:
+            expected_sig = 'sha256=' + hmac.new(WEBHOOK_SECRET.encode(), raw_data, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(expected_sig, signature):
+                return "Unauthorized", 401
 
-            is_expired = False
-            if assigned_at_str:
-                assigned_at = datetime.fromisoformat(assigned_at_str.replace('Z', '+00:00'))
-                now = datetime.now(timezone.utc)
-                elapsed_minutes = (now - assigned_at).total_seconds() / 60
-                if elapsed_minutes > NUMBER_TIMEOUT_MINUTES:
-                    is_expired = True
+        data = request.get_json(silent=True) or {}
+        if data.get('event') == 'message.received':
+            sms_data = data.get('data', {})
+            number = sms_data.get('number')
+            message_text = sms_data.get('message')
+            source = sms_data.get('source', 'Unknown')
 
-            msg_status = "delivered"
-            if not is_expired and chat_id:
-                user_res = supabase.table('users').select('balance, referred_by, pending_usd').eq('chat_id', chat_id).execute()
-                if user_res.data:
-                    curr_bal = float(user_res.data[0]['balance'])
-                    referred_by = user_res.data[0].get('referred_by')
-                    pending_usd = float(user_res.data[0].get('pending_usd') or 0.0)
+            num_query = supabase.from_('numbers').select('chat_id, assigned_at').eq('phone_number', number).execute()
+            
+            if num_query and hasattr(num_query, 'data') and num_query.data:
+                num_info = num_query.data[0]
+                chat_id = num_info.get('chat_id')
+                assigned_at_str = num_info.get('assigned_at')
 
-                    new_bal = curr_bal + EARNING_PER_SMS
-                    pending_usd += EARNING_PER_SMS
+                is_expired = False
+                if assigned_at_str:
+                    assigned_at = datetime.fromisoformat(assigned_at_str.replace('Z', '+00:00'))
+                    now = datetime.now(timezone.utc)
+                    if (now - assigned_at).total_seconds() / 60 > NUMBER_TIMEOUT_MINUTES:
+                        is_expired = True
 
-                    if referred_by and pending_usd >= 1.00:
-                        ref_user = supabase.table('users').select('balance').eq('chat_id', referred_by).execute()
-                        if ref_user.data:
-                            ref_bal = float(ref_user.data[0]['balance'])
-                            supabase.table('users').update({'balance': ref_bal + REFERRAL_BONUS_BDT}).eq('chat_id', referred_by).execute()
-                            send_telegram(referred_by, f"🎉 *AsrPay Referral Bonus!* Your referred user earned $1. You received {REFERRAL_BONUS_BDT} BDT bonus!")
-                        pending_usd -= 1.00
+                msg_status = "delivered"
+                if not is_expired and chat_id:
+                    user_res = supabase.from_('users').select('balance, referred_by, pending_usd').eq('chat_id', chat_id).execute()
+                    if user_res and hasattr(user_res, 'data') and user_res.data:
+                        curr_bal = float(user_res.data[0].get('balance', 0.0))
+                        referred_by = user_res.data[0].get('referred_by')
+                        pending_usd = float(user_res.data[0].get('pending_usd') or 0.0)
 
-                    supabase.table('users').update({
-                        'balance': new_bal,
-                        'pending_usd': pending_usd
-                    }).eq('chat_id', chat_id).execute()
+                        new_bal = curr_bal + EARNING_PER_SMS
+                        pending_usd += EARNING_PER_SMS
 
-                    msg_text = (
-                        f"📩 *[AsrPay Bot] New OTP Received!*\n"
-                        f"📱 *Number:* `{number}`\n"
-                        f"🌐 *Service:* {source}\n"
-                        f"💬 *Message:* `{message_text}`\n\n"
-                        f"💵 *Earned:* +${EARNING_PER_SMS:.2f}"
-                    )
-                    sent = send_telegram(chat_id, msg_text)
-                    if not sent:
-                        msg_status = "failed_to_send_bot"
-            else:
-                msg_status = "expired_timeout"
+                        if referred_by and pending_usd >= 1.00:
+                            ref_user = supabase.from_('users').select('balance').eq('chat_id', referred_by).execute()
+                            if ref_user and hasattr(ref_user, 'data') and ref_user.data:
+                                ref_bal = float(ref_user.data[0].get('balance', 0.0))
+                                supabase.from_('users').update({'balance': ref_bal + REFERRAL_BONUS_BDT}).eq('chat_id', referred_by).execute()
+                                send_telegram(referred_by, f"🎉 *AsrPay Referral Bonus!* Your referred user earned $1. Received {REFERRAL_BONUS_BDT} BDT bonus!")
+                            pending_usd -= 1.00
 
-            supabase.table('otp_logs').insert({
-                'chat_id': chat_id,
-                'phone_number': number,
-                'service': source,
-                'otp_message': message_text,
-                'status': msg_status
-            }).execute()
+                        supabase.from_('users').update({'balance': new_bal, 'pending_usd': pending_usd}).eq('chat_id', chat_id).execute()
 
-            if OTP_GROUP_ID:
-                group_msg = f"🔥 *[AsrPay] NEW OTP ARRIVED*\n📱 *Number:* `{number[:-4]}****`\n🌐 *Service:* {source}\n💬 *SMS:* {message_text}"
-                send_telegram(OTP_GROUP_ID, group_msg)
+                        msg_text = f"📩 *[AsrPay Bot] New OTP Received!*\n📱 *Number:* `{number}`\n🌐 *Service:* {source}\n💬 *Message:* `{message_text}`\n\n💵 *Earned:* +${EARNING_PER_SMS:.2f}"
+                        sent = send_telegram(chat_id, msg_text)
+                        if not sent:
+                            msg_status = "failed_to_send_bot"
+                else:
+                    msg_status = "expired_timeout"
+
+                supabase.from_('otp_logs').insert({'chat_id': chat_id, 'phone_number': number, 'service': source, 'otp_message': message_text, 'status': msg_status}).execute()
+
+                if OTP_GROUP_ID:
+                    group_msg = f"🔥 *[AsrPay] NEW OTP ARRIVED*\n📱 *Number:* `{number[:-4]}****`\n🌐 *Service:* {source}\n💬 *SMS:* {message_text}"
+                    send_telegram(OTP_GROUP_ID, group_msg)
+    except Exception as e:
+        print(f"Webhook processing error: {e}")
 
     return "OK", 200
 
 @app.route('/bot-webhook', methods=['POST'])
 def bot_webhook():
-    update = request.get_json(silent=True) or {}
-    
-    if "message" in update:
-        chat_id = update["message"]["chat"]["id"]
-        text = update["message"].get("text", "")
+    try:
+        update = request.get_json(silent=True) or {}
+        
+        if "message" in update:
+            chat_id = update["message"]["chat"]["id"]
+            text = update["message"].get("text", "")
 
-        if text.startswith("/start"):
-            args = text.split()
-            referrer_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
-            
-            res = supabase.table('users').select('chat_id').eq('chat_id', chat_id).execute()
-            if not res.data:
-                supabase.table('users').insert({
-                    'chat_id': chat_id,
-                    'balance': 0.00,
-                    'referred_by': referrer_id if referrer_id != chat_id else None
-                }).execute()
-            
-            # কীবোর্ডের নিচে স্থায়ী রেগুলার বাটন
-            main_keyboard = {
-                "keyboard": [
-                    [{"text": "📱 Get Number"}, {"text": "💳 Balance"}]
-                ],
-                "resize_keyboard": True
-            }
-            send_telegram(chat_id, "🤖 *Welcome to AsrPay Bot!*\n\nনিচের বাটন থেকে অপশন সিলেক্ট করুন:", reply_markup=main_keyboard)
+            if text.startswith("/start"):
+                args = text.split()
+                referrer_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+                
+                try:
+                    res = supabase.from_('users').select('chat_id').eq('chat_id', chat_id).execute()
+                    if not (res and hasattr(res, 'data') and res.data):
+                        supabase.from_('users').insert({
+                            'chat_id': chat_id,
+                            'balance': 0.00,
+                            'referred_by': referrer_id if referrer_id != chat_id else None
+                        }).execute()
+                except Exception as db_e:
+                    print(f"User insert error: {db_e}")
 
-        elif text in ["📱 Get Number", "/getnumber"]:
+                main_keyboard = {
+                    "keyboard": [
+                        [{"text": "📱 Get Number"}, {"text": "💳 Balance"}]
+                    ],
+                    "resize_keyboard": True
+                }
+                send_telegram(chat_id, "🤖 *Welcome to AsrPay Bot!*\n\nনিচের বাটন থেকে অপশন সিলেক্ট করুন:", reply_markup=main_keyboard)
+
+            elif text in ["📱 Get Number", "/getnumber"]:
+                if not check_service_status():
+                    send_telegram(chat_id, "⚠️ *দুঃখিত! বর্তমানে নম্বর সার্ভিস সাময়িকভাবে বন্ধ আছে।")
+                    return "OK", 200
+
+                menu = {
+                    "inline_keyboard": [
+                        [{"text": "🎵 TikTok", "callback_data": "get_tiktok"}, {"text": "🍏 Apple", "callback_data": "get_apple"}],
+                        [{"text": "💬 WhatsApp", "callback_data": "get_whatsapp"}, {"text": "✈️ Telegram", "callback_data": "get_telegram"}],
+                        [{"text": "📘 Facebook", "callback_data": "get_facebook"}, {"text": "🌐 Other", "callback_data": "get_other"}]
+                    ]
+                }
+                send_telegram(chat_id, "📱 *AsrPay - সার্ভিস সিলেক্ট করুন:*", reply_markup=menu)
+
+            elif text in ["💳 Balance", "/balance"]:
+                bal = 0.00
+                try:
+                    res = supabase.from_('users').select('balance').eq('chat_id', chat_id).execute()
+                    if res and hasattr(res, 'data') and res.data:
+                        bal = float(res.data[0].get('balance', 0.00))
+                except Exception as db_e:
+                    print(f"Balance check error: {db_e}")
+
+                send_telegram(chat_id, f"💳 *AsrPay Balance:* ${bal:.2f}")
+
+        elif "callback_query" in update:
+            callback = update["callback_query"]
+            chat_id = callback["message"]["chat"]["id"]
+            
             if not check_service_status():
-                send_telegram(chat_id, "⚠️ *দুঃখিত! বর্তমানে নম্বর প্রোভাইড করার সার্ভিস সাময়িকভাবে বন্ধ আছে। কিছু সময় পর চেষ্টা করুন।")
+                send_telegram(chat_id, "⚠️ *বর্তমানে নম্বর সার্ভিস বন্ধ রয়েছে!*")
                 return "OK", 200
 
-            menu = {
-                "inline_keyboard": [
-                    [{"text": "🎵 TikTok", "callback_data": "get_tiktok"}, {"text": "🍏 Apple", "callback_data": "get_apple"}],
-                    [{"text": "💬 WhatsApp", "callback_data": "get_whatsapp"}, {"text": "✈️ Telegram", "callback_data": "get_telegram"}],
-                    [{"text": "📘 Facebook", "callback_data": "get_facebook"}, {"text": "🌐 Other", "callback_data": "get_other"}]
-                ]
-            }
-            send_telegram(chat_id, "📱 *AsrPay - সার্ভিস সিলেক্ট করুন:*", reply_markup=menu)
+            service = callback["data"].replace("get_", "").upper()
+            send_telegram(chat_id, f"✅ Selected: *{service}*\n\nআপনার জন্য নম্বর প্রসেস করা হচ্ছে...")
 
-        elif text in ["💳 Balance", "/balance"]:
-            res = supabase.table('users').select('balance').eq('chat_id', chat_id).execute()
-            bal = res.data[0]['balance'] if res.data else 0.00
-            send_telegram(chat_id, f"💳 *AsrPay Balance:* ${bal:.2f}")
-
-    elif "callback_query" in update:
-        callback = update["callback_query"]
-        chat_id = callback["message"]["chat"]["id"]
-        
-        if not check_service_status():
-            send_telegram(chat_id, "⚠️ *বর্তমানে নম্বর সার্ভিস বন্ধ রয়েছে!*")
-            return "OK", 200
-
-        service = callback["data"].replace("get_", "").upper()
-        send_telegram(chat_id, f"✅ Selected: *{service}*\n\nআপনার জন্য নম্বর প্রসেস করা হচ্ছে...")
+    except Exception as main_e:
+        print(f"Bot Webhook Fatal Error Avoided: {main_e}")
 
     return "OK", 200
 
@@ -211,7 +210,6 @@ ADMIN_HTML = """
 </head>
 <body>
     <h2>🚀 AsrPay Master Control Panel</h2>
-
     <div class="card">
         <h3>🔴 / 🟢 Number Service Status</h3>
         <p>Current Status: <strong>{{ status }}</strong></p>
@@ -221,19 +219,6 @@ ADMIN_HTML = """
             <a href="/admin/toggle-service/ON" class="btn-on">Turn ON Service</a>
         {% endif %}
     </div>
-
-    <div class="card">
-        <h3>🛡️ Add / Remove Moderator</h3>
-        <form action="/admin/set-moderator" method="POST">
-            <input type="text" name="chat_id" placeholder="User Telegram Chat ID" required><br>
-            <select name="action">
-                <option value="add">Make Moderator</option>
-                <option value="remove">Remove Moderator Role</option>
-            </select><br>
-            <button type="submit">Submit</button>
-        </form>
-    </div>
-
     <div class="card">
         <h3>📱 Assign Number to User (5-Min Limit)</h3>
         <form action="/admin/assign-number" method="POST">
@@ -242,67 +227,29 @@ ADMIN_HTML = """
             <button type="submit" style="background: #28a745;">Assign Number</button>
         </form>
     </div>
-
-    <div class="card">
-        <h3>📩 Recent OTP History & Logs</h3>
-        <table>
-            <tr>
-                <th>User ID</th>
-                <th>Phone Number</th>
-                <th>Service</th>
-                <th>OTP Message</th>
-                <th>Status</th>
-            </tr>
-            {% for log in logs %}
-            <tr>
-                <td>{{ log.chat_id }}</td>
-                <td>{{ log.phone_number }}</td>
-                <td>{{ log.service }}</td>
-                <td><code>{{ log.otp_message }}</code></td>
-                <td>
-                    {% if log.status == 'delivered' %}
-                        <span style="color: green;">Delivered</span>
-                    {% else %}
-                        <span style="color: red;">{{ log.status }}</span>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </table>
-    </div>
 </body>
 </html>
 """
 
 @app.route('/admin')
 def admin_panel():
+    status = 'ON'
     try:
-        status_res = supabase.table('settings').select('value').eq('key', 'service_status').execute()
-        status = status_res.data[0]['value'] if status_res.data else 'ON'
+        status_res = supabase.from_('settings').select('value').eq('key', 'service_status').execute()
+        if status_res and hasattr(status_res, 'data') and status_res.data:
+            status = status_res.data[0].get('value', 'ON')
     except Exception:
         status = 'ON'
-    
-    try:
-        logs_res = supabase.table('otp_logs').select('*').order('id', desc=True).limit(15).execute()
-        logs = logs_res.data if logs_res.data else []
-    except Exception:
-        logs = []
 
-    return render_template_string(ADMIN_HTML, status=status, logs=logs)
+    return render_template_string(ADMIN_HTML, status=status)
 
 @app.route('/admin/toggle-service/<state>')
 def toggle_service(state):
-    supabase.table('settings').upsert({'key': 'service_status', 'value': state}).execute()
+    try:
+        supabase.from_('settings').upsert({'key': 'service_status', 'value': state}).execute()
+    except Exception as e:
+        print(f"Toggle error: {e}")
     return f"Service turned {state}! <br><a href='/admin'>Go Back</a>"
-
-@app.route('/admin/set-moderator', methods=['POST'])
-def set_moderator():
-    chat_id = request.form.get('chat_id')
-    action = request.form.get('action')
-    is_mod = True if action == 'add' else False
-
-    supabase.table('users').update({'is_moderator': is_mod}).eq('chat_id', chat_id).execute()
-    return f"User {chat_id} moderator status updated to {is_mod}! <br><a href='/admin'>Go Back</a>"
 
 @app.route('/admin/assign-number', methods=['POST'])
 def assign_number():
@@ -310,13 +257,16 @@ def assign_number():
     chat_id = request.form.get('chat_id')
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    supabase.table('numbers').upsert({
-        'phone_number': phone_number, 
-        'chat_id': chat_id,
-        'assigned_at': now_iso
-    }).execute()
+    try:
+        supabase.from_('numbers').upsert({
+            'phone_number': phone_number, 
+            'chat_id': chat_id,
+            'assigned_at': now_iso
+        }).execute()
+        send_telegram(chat_id, f"📱 *[AsrPay] New Number Assigned:* `{phone_number}`\n⏰ *Time Limit:* 5 Minutes.")
+    except Exception as e:
+        print(f"Assign error: {e}")
 
-    send_telegram(chat_id, f"📱 *[AsrPay] New Number Assigned:* `{phone_number}`\n⏰ *Time Limit:* 5 Minutes.")
     return "Number Assigned successfully! <br><a href='/admin'>Go Back</a>"
 
 if __name__ == '__main__':
