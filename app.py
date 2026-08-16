@@ -37,9 +37,9 @@ def send_telegram(chat_id, text, reply_markup=None):
 
 def check_service_status():
     try:
-        res = supabase.table('settings').select('value').eq('key', 'service_status').execute()
-        if res.data:
-            return res.data[0]['value'] == 'ON'
+        res = supabase.from_('settings').select('value').eq('key', 'service_status').execute()
+        if hasattr(res, 'data') and res.data:
+            return res.data[0].get('value') == 'ON'
     except Exception as e:
         print(f"Supabase check error: {e}")
     return True
