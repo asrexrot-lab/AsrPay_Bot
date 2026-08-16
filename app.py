@@ -16,7 +16,7 @@ WEBHOOK_SECRET = os.getenv("PANEL_WEBHOOK_SECRET", "")
 
 OTP_GROUP_ID = os.getenv("OTP_GROUP_ID", "")
 
-# আপনার টেলিগ্রাম আইডি এখানে দিন (যাতে আপনি টেলিগ্রাম থেকে অ্যাডমিন প্যানেল চালাতে পারেন)
+# আপনার অ্যাডমিন চ্যাট আইডি
 ADMIN_CHAT_IDS = ["8745487398"] 
 
 EARNING_PER_SMS = 0.05
@@ -51,11 +51,20 @@ def check_service_status():
     status = get_setting('service_status', 'ON')
     return status == 'ON'
 
+def is_user_banned(chat_id):
+    try:
+        res = supabase.from_('users').select('is_banned').eq('chat_id', chat_id).execute()
+        if res and hasattr(res, 'data') and res.data:
+            return bool(res.data[0].get('is_banned', False))
+    except Exception:
+        pass
+    return False
+
 @app.route('/')
 def home():
     return "🚀 AsrPay Professional Master Server Running!", 200
 
-# ------------------- 1. API & SMS WEBHOOK (5-MIN EXPIRY CHECK) -------------------
+# ------------------- 1. API & SMS WEBHOOK -------------------
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     try:
@@ -80,6 +89,9 @@ def handle_webhook():
                 num_info = num_query.data[0]
                 chat_id = num_info.get('chat_id')
                 assigned_at_str = num_info.get('assigned_at')
+
+                if is_user_banned(chat_id):
+                    return "OK", 200
 
                 is_expired = False
                 if assigned_at_str:
@@ -128,6 +140,9 @@ def handle_webhook():
 
     return "OK", 200
 
+# Global dictionary to track withdrawal method selection states temporarily
+user_wd_state = {}
+
 # ------------------- 2. TELEGRAM BOT WORKFLOW -------------------
 @app.route('/bot-webhook', methods=['POST'])
 def bot_webhook():
@@ -137,6 +152,11 @@ def bot_webhook():
         if "message" in update:
             chat_id = update["message"]["chat"]["id"]
             text = update["message"].get("text", "")
+
+            # Check Ban Status
+            if is_user_banned(chat_id):
+                send_telegram(chat_id, "❌ *আপনার এই প্যানেলটি ব্যবহার করার অনুমতি নেই!* (আপনার অ্যাকাউন্টটি ব্লক/ব্যান করা হয়েছে)")
+                return "OK", 200
 
             if text.startswith("/start"):
                 args = text.split()
@@ -148,7 +168,8 @@ def bot_webhook():
                         supabase.from_('users').insert({
                             'chat_id': chat_id,
                             'balance': 0.00,
-                            'referred_by': referrer_id if referrer_id != chat_id else None
+                            'referred_by': referrer_id if referrer_id != chat_id else None,
+                            'is_banned': False
                         }).execute()
                 except Exception as db_e:
                     print(f"User insert error: {db_e}")
@@ -235,7 +256,37 @@ def bot_webhook():
                 )
                 send_telegram(chat_id, sup_msg, reply_markup=reply_markup)
 
-            # টেলিগ্রাম থেকে অ্যাডমিন প্যানেল কমান্ড (/admin)
+            # Handling user entering wallet number (bKash/Nagad) during withdrawal workflow
+            elif chat_id in user_wd_state:
+                method = user_wd_state.pop(chat_id)
+                wallet_no = text.strip()
+                
+                bal = 0.00
+                try:
+                    res = supabase.from_('users').select('balance').eq('chat_id', chat_id).execute()
+                    if res and hasattr(res, 'data') and res.data:
+                        bal = float(res.data[0].get('balance', 0.00))
+                except Exception:
+                    pass
+
+                # Save withdraw request to DB
+                try:
+                    supabase.from_('withdrawals').insert({
+                        'chat_id': chat_id,
+                        'method': method,
+                        'wallet_number': wallet_no,
+                        'amount': bal,
+                        'status': 'Pending'
+                    }).execute()
+                except Exception as e:
+                    print(f"Wd db error: {e}")
+
+                # Deduct balance or reset
+                supabase.from_('users').update({'balance': 0.00}).eq('chat_id', chat_id).execute()
+                
+                send_telegram(chat_id, f"✅ *Withdrawal Request Successful!*\n\n💳 Method: *{method}*\n📱 Number: `{wallet_no}`\n💰 Amount: *${bal:.2f}*\n\nঅ্যাডমিন আপনার রিকোয়েস্টটি চেক করে দ্রুত পেমেন্ট পাঠিয়ে দেবেন।")
+
+            # Telegram Admin Command (/admin)
             elif text.startswith("/admin"):
                 if str(chat_id) in ADMIN_CHAT_IDS:
                     admin_inline_keyboard = {
@@ -253,6 +304,9 @@ def bot_webhook():
             chat_id = callback["message"]["chat"]["id"]
             data = callback["data"]
 
+            if is_user_banned(chat_id):
+                return "OK", 200
+
             if data == "req_withdraw":
                 bal = 0.00
                 try:
@@ -262,22 +316,30 @@ def bot_webhook():
                 except Exception:
                     pass
 
-                admin_user = get_setting('admin_username', '@AsrPayAdmin')
-
                 if bal < MIN_WITHDRAWAL_USD:
                     send_telegram(chat_id, f"❌ *উইথড্র ব্যর্থ হয়েছে!*\n\nআপনার বর্তমান ব্যালেন্স: *${bal:.2f}*\nসর্বনিম্ন উইথড্র লিমিট: *${MIN_WITHDRAWAL_USD:.2f}*")
                 else:
-                    send_telegram(chat_id, f"✅ *উইথড্র করার জন্য প্রস্তুত!*\n\nআপনার ব্যালেন্স: *${bal:.2f}*\n\nউইথড্র প্রসেস করতে সরাসরি এডমিনের সাথে যোগাযোগ করুন:\n👉 {admin_user}")
+                    method_menu = {
+                        "inline_keyboard": [
+                            [{"text": "🔴 bKash", "callback_data": "wd_bkash"}, {"text": "🟠 Nagad", "callback_data": "wd_nagad"}]
+                        ]
+                    }
+                    send_telegram(chat_id, f"💸 *আপনার ব্যালেন্স: ${bal:.2f}*\n\nকোন মাধ্যমে পেমেন্ট নিতে চান তা সিলেক্ট করুন:", reply_markup=method_menu)
+
+            elif data in ["wd_bkash", "wd_nagad"]:
+                method_name = "bKash" if data == "wd_bkash" else "Nagad"
+                user_wd_state[chat_id] = method_name
+                send_telegram(chat_id, f"📱 আপনার *{method_name}* পার্সোনাল বা এজেন্ট নম্বরটি লিখে পাঠান:")
 
             elif data == "admin_on":
                 if str(chat_id) in ADMIN_CHAT_IDS:
                     supabase.from_('settings').upsert({'key': 'service_status', 'value': 'ON'}).execute()
-                    send_telegram(chat_id, "✅ সার্ভিস সফলভাবে চালু (ON) করা হয়েছে!")
+                    send_telegram(chat_id, "✅ সার্ভিস সফলভাবে চালু (ON) করা হয়েছে!")
 
             elif data == "admin_off":
                 if str(chat_id) in ADMIN_CHAT_IDS:
                     supabase.from_('settings').upsert({'key': 'service_status', 'value': 'OFF'}).execute()
-                    send_telegram(chat_id, "❌ সার্ভিস সফলভাবে বন্ধ (OFF) করা হয়েছে!")
+                    send_telegram(chat_id, "❌ সার্ভিস সফলভাবে বন্ধ (OFF) করা হয়েছে!")
 
             elif data == "admin_logs":
                 if str(chat_id) in ADMIN_CHAT_IDS:
@@ -289,9 +351,9 @@ def bot_webhook():
                                 log_text += f"📱 `{log.get('phone_number')}`\n🌐 {log.get('service')}\n💬 `{log.get('otp_message')}`\nStatus: {log.get('status')}\n------------------\n"
                             send_telegram(chat_id, log_text)
                         else:
-                            send_telegram(chat_id, "⚠️ কোনো লগ পাওয়া যায়নি।")
+                            send_telegram(chat_id, "⚠️ কোনো লগ পাওয়া যায়নি।")
                     except Exception as e:
-                        send_telegram(chat_id, f"❌ লগ আনতে সমস্যা হয়েছে: {e}")
+                        send_telegram(chat_id, f"❌ লগ আনতে সমস্যা হয়েছে: {e}")
 
             elif data.startswith("get_"):
                 if not check_service_status():
@@ -306,7 +368,7 @@ def bot_webhook():
 
     return "OK", 200
 
-# ------------------- 3. POWERFUL ADMIN PANEL CONTROL -------------------
+# ------------------- 3. ADVANCED ADMIN PANEL DASHBOARD -------------------
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html lang="bn">
@@ -318,7 +380,7 @@ ADMIN_HTML = """
     <style>
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         body { background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
-        .container { max-width: 950px; margin: 0 auto; }
+        .container { max-width: 1000px; margin: 0 auto; }
         .header { background: linear-gradient(135deg, #1e293b, #334155); padding: 25px; border-radius: 16px; border: 1px solid #475569; text-align: center; margin-bottom: 25px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }
         .header h1 { margin: 0; font-size: 28px; color: #38bdf8; letter-spacing: 1px; }
         .card { background: #1e293b; padding: 22px; border-radius: 14px; margin-bottom: 20px; border: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2); }
@@ -330,6 +392,8 @@ ADMIN_HTML = """
         .btn-on { background: #10b981; } .btn-on:hover { background: #059669; }
         .btn-off { background: #ef4444; } .btn-off:hover { background: #dc2626; }
         .btn-primary { background: #0284c7; width: 100%; margin-top: 10px; padding: 12px; } .btn-primary:hover { background: #0369a1; }
+        .btn-danger { background: #dc2626; padding: 6px 12px; font-size: 12px; }
+        .btn-success { background: #059669; padding: 6px 12px; font-size: 12px; }
         input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #475569; background: #0f172a; color: white; border-radius: 8px; font-size: 14px; }
         input:focus { border-color: #38bdf8; outline: none; }
         table { width: 100%; border-collapse: collapse; margin-top: 12px; }
@@ -363,18 +427,54 @@ ADMIN_HTML = """
         {% endif %}
     </div>
 
-    <!-- Dynamic Settings (Admin Username & Group) -->
+    <!-- User Management & Balance/Ban Control -->
     <div class="card">
-        <h3>⚙️ Support & Admin Settings</h3>
-        <form action="/admin/update-settings" method="POST">
-            <label style="color:#94a3b8;">Admin Telegram Username:</label>
-            <input type="text" name="admin_username" value="{{ admin_username }}" placeholder="@AsrPayAdmin" required>
-            
-            <label style="color:#94a3b8;">Official Support Group Link (Optional):</label>
-            <input type="text" name="support_group" value="{{ support_group }}" placeholder="https://t.me/yourgroup">
-            
-            <button type="submit" class="btn btn-primary">Save Settings</button>
+        <h3>👥 User Management (Add/Minus Cash & Ban Control)</h3>
+        <form action="/admin/manage-user" method="POST">
+            <input type="text" name="chat_id" placeholder="User Telegram Chat ID (e.g. 123456789)" required>
+            <input type="number" step="0.01" name="amount" placeholder="Amount in USD to Add (+) or Minus (-) (e.g. 1.50 or -1.50)" required>
+            <button type="submit" class="btn btn-primary" style="background: #10b981;">Update User Balance & Notify</button>
         </form>
+
+        <h4 style="color: #38bdf8; margin-top: 20px;">Registered Users List & Ban Controls</h4>
+        <div style="overflow-x: auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Chat ID</th>
+                        <th>Balance</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users %}
+                    <tr>
+                        <td><code>{{ user.chat_id }}</code></td>
+                        <td>${{ "%.2f"|format(user.balance|float) }}</td>
+                        <td>
+                            {% if user.is_banned %}
+                                <span class="badge-fail">Banned</span>
+                            {% else %}
+                                <span class="badge-success">Active</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if user.is_banned %}
+                                <a href="/admin/unban/{{ user.chat_id }}" class="btn btn-success">Unban</a>
+                            {% else %}
+                                <a href="/admin/ban/{{ user.chat_id }}" class="btn btn-danger">Ban ID</a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="4" style="text-align: center; color: #64748b;">No users found.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <!-- Assign Number Section -->
@@ -382,7 +482,7 @@ ADMIN_HTML = """
         <h3>📱 Assign Number to User (5-Min Timeout)</h3>
         <form action="/admin/assign-number" method="POST">
             <input type="text" name="phone_number" placeholder="Phone Number (+8801XXXXXXXXX)" required>
-            <input type="text" name="chat_id" placeholder="User Telegram Chat ID (e.g. 123456789)" required>
+            <input type="text" name="chat_id" placeholder="User Telegram Chat ID" required>
             <button type="submit" class="btn btn-primary" style="background: #10b981;">Assign Number Now</button>
         </form>
     </div>
@@ -434,8 +534,6 @@ ADMIN_HTML = """
 @app.route('/admin')
 def admin_panel():
     status = get_setting('service_status', 'ON')
-    admin_username = get_setting('admin_username', '@AsrPayAdmin')
-    support_group = get_setting('support_group', '')
     
     logs = []
     try:
@@ -445,12 +543,19 @@ def admin_panel():
     except Exception:
         logs = []
 
+    users = []
+    try:
+        users_res = supabase.from_('users').select('*').limit(20).execute()
+        if users_res and hasattr(users_res, 'data') and users_res.data:
+            users = users_res.data
+    except Exception:
+        users = []
+
     return render_template_string(
         ADMIN_HTML, 
         status=status, 
-        admin_username=admin_username, 
-        support_group=support_group, 
-        logs=logs
+        logs=logs,
+        users=users
     )
 
 @app.route('/admin/toggle-service/<state>')
@@ -461,18 +566,47 @@ def toggle_service(state):
         print(f"Toggle error: {e}")
     return f"Service status changed to {state}! <br><a href='/admin'>Go Back to Admin Panel</a>"
 
-@app.route('/admin/update-settings', methods=['POST'])
-def update_settings():
-    admin_username = request.form.get('admin_username', '').strip()
-    support_group = request.form.get('support_group', '').strip()
-    
+@app.route('/admin/manage-user', methods=['POST'])
+def manage_user():
+    chat_id = request.form.get('chat_id', '').strip()
     try:
-        supabase.from_('settings').upsert({'key': 'admin_username', 'value': admin_username}).execute()
-        supabase.from_('settings').upsert({'key': 'support_group', 'value': support_group}).execute()
+        amount = float(request.form.get('amount', '0'))
+    except ValueError:
+        amount = 0.0
+
+    try:
+        res = supabase.from_('users').select('balance').eq('chat_id', chat_id).execute()
+        if res and hasattr(res, 'data') and res.data:
+            curr_bal = float(res.data[0].get('balance', 0.0))
+            new_bal = curr_bal + amount
+            supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
+
+            if amount > 0:
+                send_telegram(chat_id, f"🎉 *Congrats!* আপনার অ্যাকাউন্টে নতুন ক্যাশ যোগ করা হয়েছে!\n\n💰 যুক্ত হয়েছে: `+${amount:.2f}`\n💳 মোট ব্যালেন্স: `${new_bal:.2f}`")
+            elif amount < 0:
+                send_telegram(chat_id, f"⚠️ *Balance Update Notice!*\n\nআপনার অ্যাকাউন্ট থেকে ব্যালেন্স মাইনাস করা হয়েছে: `- ${abs(amount):.2f}`\n💳 বর্তমান ব্যালেন্স: `${new_bal:.2f}`")
     except Exception as e:
-        print(f"Settings update error: {e}")
-        
-    return "Settings Updated Successfully! <br><a href='/admin'>Go Back to Admin Panel</a>"
+        print(f"Manage user error: {e}")
+
+    return "User balance updated successfully! <br><a href='/admin'>Go Back to Admin Panel</a>"
+
+@app.route('/admin/ban/<chat_id>')
+def ban_user(chat_id):
+    try:
+        supabase.from_('users').update({'is_banned': True}).eq('chat_id', chat_id).execute()
+        send_telegram(chat_id, "❌ *আপনার এই প্যানেলটি ব্যবহার করার অনুমতি নেই!*")
+    except Exception as e:
+        print(f"Ban error: {e}")
+    return f"User {chat_id} banned successfully! <br><a href='/admin'>Go Back to Admin Panel</a>"
+
+@app.route('/admin/unban/<chat_id>')
+def unban_user(chat_id):
+    try:
+        supabase.from_('users').update({'is_banned': False}).eq('chat_id', chat_id).execute()
+        send_telegram(chat_id, "✅ আপনার অ্যাকাউন্টটি আবার সচল করা হয়েছে! আপনি এখন বট ব্যবহার করতে পারবেন।")
+    except Exception as e:
+        print(f"Unban error: {e}")
+    return f"User {chat_id} unbanned successfully! <br><a href='/admin'>Go Back to Admin Panel</a>"
 
 @app.route('/admin/assign-number', methods=['POST'])
 def assign_number():
