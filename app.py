@@ -16,7 +16,6 @@ ADMIN_CHAT_ID = "8745487398"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-#অ্যাডমিনদের সাময়িক স্টেট বা মেমোরি ট্র্যাক করার জন্য
 admin_sessions = {}
 
 def send_telegram(chat_id, text, reply_markup=None):
@@ -35,7 +34,6 @@ def send_telegram(chat_id, text, reply_markup=None):
 def home():
     return "🚀 AsrPay Bot Admin System is Running!", 200
 
-# ------------------- 1. WEBHOOK (SMS RECEIVED) -------------------
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     raw_data = request.get_data()
@@ -79,7 +77,6 @@ def handle_webhook():
 
     return "ok", 200
 
-# ------------------- 2. TELEGRAM BOT HANDLER -------------------
 @app.route('/bot-webhook', methods=['POST'])
 def bot_webhook():
     update = request.get_json(silent=True) or {}
@@ -87,7 +84,6 @@ def bot_webhook():
     if "message" in update:
         chat_id = str(update["message"]["chat"]["id"])
         text = update["message"].get("text", "")
-        args = text.split(" ")
 
         reply_keyboard = {
             "keyboard": [
@@ -98,13 +94,12 @@ def bot_webhook():
             "persistent": True
         }
 
-        # অ্যাডমিন যদি লাইভ টেক্সট ইনপুট দেয় (যেমন ফরম্যাট অনুযায়ী নম্বর বা কান্ট্রি পাঠানো)
         if chat_id == str(ADMIN_CHAT_ID) and chat_id in admin_sessions:
             step = admin_sessions[chat_id].get("step")
             
             if step == "waiting_section":
                 admin_sessions[chat_id]["section"] = text
-                admin_sessions[chatid]["step"] = "waiting_country"
+                admin_sessions[chat_id]["step"] = "waiting_country"
                 send_telegram(chat_id, "🌍 এখন **Country Name** লিখুন (যেমন: USA):")
                 return "ok", 200
                 
