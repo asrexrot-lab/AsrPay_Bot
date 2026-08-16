@@ -31,7 +31,7 @@ def send_telegram(chat_id, text, reply_markup=None):
 
 @app.route('/')
 def home():
-    return "🚀 AsrPay OTP Automation Server is Running Successfully!", 200
+    return "🚀 AsrPay Advanced OTP Automation Server is Running!", 200
 
 # ------------------- 1. WEBHOOK (KSI IPRN SMS RECEIVED) -------------------
 @app.route('/webhook', methods=['POST'])
@@ -82,18 +82,24 @@ def handle_webhook():
 def bot_webhook():
     update = request.get_json(silent=True) or {}
     
-    # সাধারণ টেক্সট মেসেজ হ্যান্ডেল করা
     if "message" in update:
         chat_id = update["message"]["chat"]["id"]
         text = update["message"].get("text", "")
+        args = text.split(" ")
 
+        # রেফারেল সিস্টেম হ্যান্ডেল করা (/start ref_12345)
         if text.startswith("/start"):
-            menu_markup = {
+            if len(args) > 1:
+                ref_code = args[1]
+                # রেফারেল ডাটা সেভ বা কাউন্ট করার লজিক এখানে থাকতে পারে
+            
+            main_menu = {
                 "inline_keyboard": [
-                    [{"text": "📥 Get Number", "callback_data": "get_number"}, {"text": "💰 My Balance", "callback_data": "my_balance"}]
+                    [{"text": "📥 Get Number", "callback_data": "menu_sections"}, {"text": "💰 Balance", "callback_data": "my_balance"}],
+                    [{"text": "👥 Referral", "callback_data": "my_referral"}, {"text": "☎️ Support", "url": "https://t.me/AsrPaySupport"}]
                 ]
             }
-            send_telegram(chat_id, "✨ *Welcome to AsrPay OTP Bot!*\n\nনম্বর নিতে বা ব্যালেন্স দেখতে নিচের মেনু ব্যবহার করুন:", reply_markup=menu_markup)
+            send_telegram(chat_id, "✨ *Welcome to AsrPay OTP Bot!*\n\nনিচের মেনু থেকে আপনার প্রয়োজনীয় অপشن সিলেক্ট করুন:", reply_markup=main_menu)
         
         elif text.startswith("/admin"):
             if str(chat_id) == str(ADMIN_CHAT_ID):
@@ -103,34 +109,67 @@ def bot_webhook():
                         [{"text": "📢 Broadcast Notice", "callback_data": "admin_notice"}]
                     ]
                 }
-                send_telegram(chat_id, "👑 *Admin Control Panel*\n\nকমপ্লিট ম্যানেজমেন্টের জন্য নিচের ওয়েব প্যানেলটি ব্যবহার করুন:", reply_markup=admin_kb)
+                send_telegram(chat_id, "👑 *Admin Control Panel*\n\nএকাধিক নম্বর একসাথে যোগ করতে এবং প্যানেল কন্ট্রোল করতে নিচে যান:", reply_markup=admin_kb)
             else:
                 send_telegram(chat_id, "❌ আপনার এই কমান্ড ব্যবহারের অনুমতি নেই!")
 
-    # ইনলাইন বাটন ক্লিক (Callback Query) হ্যান্ডেল করা
     elif "callback_query" in update:
         query = update["callback_query"]
         chat_id = query["message"]["chat"]["id"]
         data = query["data"]
 
-        if data == "get_number":
-            # ডাটাবেজ থেকে একটি ফ্রী বা অ্যাক্টিভ নম্বর এনে দেওয়ার লজিক
+        if data == "menu_sections":
+            # ডাটাবেজ থেকে সেকশন বা ক্যাটাগরি লোড করা
             try:
-                num_check = supabase.from_('numbers_pool').select('*').eq('status', 'available').limit(1).execute()
+                sec_res = supabase.from_('sections').select('section_name').execute()
+                buttons = []
+                if sec_res and sec_res.data:
+                    for s in sec_res.data:
+                        s_name = s['section_name']
+                        buttons.append([{"text": f"📂 {s_name}", "callback_data": f"sec_{s_name}"}])
+                
+                buttons.append([{"text": "⬅️ Back to Home", "callback_data": "home_menu"}])
+                send_telegram(chat_id, "📂 *Select a Section/Category:*", reply_markup={"inline_keyboard": buttons})
+            except Exception as e:
+                send_telegram(chat_id, "⚠️ বর্তমানে কোনো সেকশন পাওয়া যায়নি।")
+
+        elif data.startswith("sec_"):
+            section_name = data.replace("sec_", "")
+            # নির্দিষ্ট সেকশনের কান্ট্রি লোড করা
+            try:
+                country_res = supabase.from_('countries').select('*').eq('section_name', section_name).execute()
+                buttons = []
+                if country_res and country_res.data:
+                    for c in country_res.data:
+                        c_name = c['country_name']
+                        rate = c['rate']
+                        buttons.append([{"text": f"🌍 {c_name} (${rate})", "callback_data": f"getnum_{section_name}_{c_name}"}])
+                
+                buttons.append([{"text": "⬅️ Back", "callback_data": "menu_sections"}])
+                send_telegram(chat_id, f"🌍 *Select Country for {section_name}:*", reply_markup={"inline_keyboard": buttons})
+            except Exception as e:
+                send_telegram(chat_id, "⚠️ এই সেকশনে কোনো কান্ট্রি নেই।")
+
+        elif data.startswith("getnum_"):
+            parts = data.split("_")
+            section_name = parts[1]
+            country_name = parts[2]
+
+            try:
+                num_check = supabase.from_('numbers_pool').select('*').eq('section', section_name).eq('country', country_name).eq('status', 'available').limit(1).execute()
                 if num_check and num_check.data:
                     num_data = num_check.data[0]
                     phone = num_data.get('phone_number')
                     rate = num_data.get('rate', 0.05)
 
-                    # ইউজারের নামে নম্বরটি অ্যাসাইন করা হলো
                     supabase.from_('numbers_pool').update({'status': 'assigned'}).eq('phone_number', phone).execute()
                     supabase.from_('numbers_assigned').insert({'chat_id': str(chat_id), 'phone_number': phone, 'status': 'active', 'rate': rate}).execute()
 
-                    send_telegram(chat_id, f"📱 *Your Number is Ready!*\n\nNumber: `{phone}`\nRate: `${rate}`\n\nএখন এই নম্বরে ওটিপি পাঠান, কোድ আসলে এখানে চলে আসবে।")
+                    send_telegram(chat_id, f"📱 *Number Assigned Successfully!*\n\nSection: `{section_name}`\nCountry: `{country_name}`\nNumber: `{phone}`\nRate: `${rate}`\n\nএখন এই নম্বরে কোড পাঠান!")
                 else:
-                    send_telegram(chat_id, "⚠️ দুঃখিত, বর্তমানে কোনো নম্বর খালি নেই। একটু পরে আবার চেষ্টা করুন।")
+                    send_telegram(chat_id, "⚠️ দুঃখিত, এই কান্ট্রিতে বর্তমানে কোনো নম্বর খালি নেই।")
             except Exception as e:
-                send_telegram(chat_id, f"❌ Error fetching number: {e}")
+                send_telegram(chat_id, f"❌ Error: {e}")
 
         elif data == "my_balance":
             try:
@@ -139,16 +178,29 @@ def bot_webhook():
                 if user_res and user_res.data:
                     balance = float(user_res.data[0].get('balance', 0.0))
                 else:
-                    # যদি ইউজারের রেকর্ড না থাকে তবে তৈরি করা
                     supabase.from_('users').insert({'chat_id': str(chat_id), 'balance': 0.0}).execute()
                 
                 send_telegram(chat_id, f"💰 *Your Current Balance:* `${balance:.2f}`")
             except Exception as e:
-                send_telegram(chat_id, f"❌ Error checking balance: {e}")
+                send_telegram(chat_id, f"❌ Error: {e}")
+
+        elif data == "my_referral":
+            bot_username = "AsrPayBot" # আপনার বটের ইউজারনেম দিন
+            ref_link = f"https://t.me/{bot_username}?start=ref_{chat_id}"
+            send_telegram(chat_id, f"👥 *Referral Program*\n\nআপনার রেফারেল লিংক:\n`{ref_link}`\n\nএই লিংকের মাধ্যমে বন্ধুরা জয়েন করলে আপনি বোনাস পাবেন!")
+
+        elif data == "home_menu":
+            main_menu = {
+                "inline_keyboard": [
+                    [{"text": "📥 Get Number", "callback_data": "menu_sections"}, {"text": "💰 Balance", "callback_data": "my_balance"}],
+                    [{"text": "👥 Referral", "callback_data": "my_referral"}, {"text": "☎️ Support", "url": "https://t.me/AsrPaySupport"}]
+                ]
+            }
+            send_telegram(chat_id, "✨ *Main Menu:*", reply_markup=main_menu)
 
     return "ok", 200
 
-# ------------------- 3. WEB ADMIN PANEL -------------------
+# ------------------- 3. WEB ADMIN PANEL (BULK NUMBER ADD) -------------------
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html lang="bn">
@@ -160,7 +212,7 @@ ADMIN_HTML = """
         body { background: #0f172a; color: #f8fafc; font-family: sans-serif; margin: 0; padding: 15px; }
         .card { background: #1e293b; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #334155; }
         h2, h3 { color: #38bdf8; margin-top: 0; }
-        input, select { width: 100%; padding: 10px; margin: 5px 0 12px 0; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; box-sizing: border-box; }
+        input, select, textarea { width: 100%; padding: 10px; margin: 5px 0 12px 0; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; box-sizing: border-box; }
         .btn { background: #0284c7; color: white; border: none; padding: 10px; width: 100%; border-radius: 6px; font-weight: bold; cursor: pointer; }
         .btn:hover { background: #0369a1; }
     </style>
@@ -169,19 +221,23 @@ ADMIN_HTML = """
     <h2>👑 AsrPay Admin Dashboard</h2>
     
     <div class="card">
-        <h3>➕ Add Number to Pool</h3>
-        <form action="/admin/add-number" method="POST">
-            <input type="text" name="phone_number" placeholder="Phone Number (e.g. +123456789)" required>
-            <input type="number" step="0.01" name="rate" placeholder="Rate (USD)" required>
-            <button class="btn">Add Number</button>
+        <h3>➕ Add Section & Country</h3>
+        <form action="/admin/add-structure" method="POST">
+            <input type="text" name="section_name" placeholder="Section Name (e.g. Social Media)" required>
+            <input type="text" name="country_name" placeholder="Country Name (e.g. USA)" required>
+            <input type="number" step="0.01" name="rate" placeholder="Rate per SMS (USD)" required>
+            <button class="btn">Save Section & Country</button>
         </form>
     </div>
 
     <div class="card">
-        <h3>📢 Send Notice to Group</h3>
-        <form action="/admin/broadcast" method="POST">
-            <input type="text" name="notice_text" placeholder="Notice Message..." required>
-            <button class="btn">Broadcast Notice</button>
+        <h3>📦 Bulk Add Numbers (একসাথে অনেক নম্বর)</h3>
+        <form action="/admin/bulk-add" method="POST">
+            <input type="text" name="section_name" placeholder="Section Name" required>
+            <input type="text" name="country_name" placeholder="Country Name" required>
+            <input type="number" step="0.01" name="rate" placeholder="Rate (USD)" required>
+            <textarea name="numbers_list" rows="5" placeholder="প্রতি লাইনে একটি করে অথবা কমা দিয়ে নম্বরগুলো দিন..." required></textarea>
+            <button class="btn">Upload All Numbers</button>
         </form>
     </div>
 </body>
@@ -192,22 +248,42 @@ ADMIN_HTML = """
 def admin_dashboard():
     return render_template_string(ADMIN_HTML)
 
-@app.route('/admin/add-number', methods=['POST'])
-def add_number():
-    phone = request.form.get('phone_number')
+@app.route('/admin/add-structure', methods=['POST'])
+def add_structure():
+    sec = request.form.get('section_name')
+    cou = request.form.get('country_name')
     rate = float(request.form.get('rate', 0.05))
     try:
-        supabase.from_('numbers_pool').insert({'phone_number': phone, 'status': 'available', 'rate': rate}).execute()
-        return "Number Added Successfully! <br><br><a href='/admin'>⬅️ Go Back</a>"
+        supabase.from_('sections').upsert({'section_name': sec}).execute()
+        supabase.from_('countries').upsert({'section_name': sec, 'country_name': cou, 'rate': rate}).execute()
+        return "Section & Country Added Successfully! <br><br><a href='/admin'>⬅️ Go Back</a>"
     except Exception as e:
         return f"Error: {e} <br><br><a href='/admin'>⬅️ Go Back</a>"
 
-@app.route('/admin/broadcast', methods=['POST'])
-def broadcast_notice():
-    notice = request.form.get('notice_text', '')
-    if OTP_GROUP_ID:
-        send_telegram(OTP_GROUP_ID, f"📢 *Official Notice*\n\n{notice}")
-    return "Notice Sent Successfully! <br><br><a href='/admin'>⬅️ Go Back</a>"
+@app.route('/admin/bulk-add', methods=['POST'])
+def bulk_add():
+    sec = request.form.get('section_name')
+    cou = request.form.get('country_name')
+    rate = float(request.form.get('rate', 0.05))
+    raw_text = request.form.get('numbers_list', '')
+    
+    # কমা অথবা নতুন লাইন দিয়ে নম্বর আলাদা করা
+    numbers = [n.strip() for n in raw_text.replace(',', '\n').split('\n') if n.strip()]
+    
+    count = 0
+    try:
+        for num in numbers:
+            supabase.from_('numbers_pool').insert({
+                'phone_number': num,
+                'section': sec,
+                'country': cou,
+                'rate': rate,
+                'status': 'available'
+            }).execute()
+            count += 1
+        return f"Successfully Added {count} Numbers! <br><br><a href='/admin'>⬅️ Go Back</a>"
+    except Exception as e:
+        return f"Error: {e} <br><br><a href='/admin'>⬅️ Go Back</a>"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
