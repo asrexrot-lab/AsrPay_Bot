@@ -12,7 +12,7 @@ SUPABASE_URL = "https://mfrmudgpjjonycdrvlhe.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1mcm11ZGdwampvbnljZHJ2bGhlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4NzI4NDksImV4cCI6MjEwMjQ0ODg0OX0.gjsVOT0TKdiHJVcEkp5SuJklq65XQVQKzjQ0SmS5l2Q"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8831964761:AAFA8OyHWniT5RlPBpSItoszKei2ahO_U8U")
 WEBHOOK_SECRET = os.getenv("PANEL_WEBHOOK_SECRET", "")
-OTP_GROUP_ID = "-1003980634872"  # আপনার দেওয়া গ্রুপ আইডি কনফিগার করা হলো
+OTP_GROUP_ID = "-1003980634872"
 ADMIN_CHAT_ID = "8745487398"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -64,13 +64,11 @@ def handle_webhook():
                     new_bal = curr_bal + rate
                     supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
 
-                    # ইউজারের ইনবক্সে ওটিপি পাঠানো
                     msg = f"📩 *New OTP Received!*\n\n📱 Number: `{number}`\n🌐 Service: `{source}`\n💬 Message: `{message_text}`\n\n💵 Earned: `+${rate:.2f}`"
                     send_telegram(chat_id, msg)
 
                     supabase.from_('numbers_assigned').update({'status': 'used'}).eq('phone_number', number).execute()
 
-                    # নির্দিষ্ট গ্রুপে নোটিফিকেশন পাঠানো
                     if OTP_GROUP_ID:
                         group_msg = f"🔥 *New OTP Delivered*\n📱 Number: `{number[:-4]}****`\n🌐 Service: `{source}`\n💬 SMS: `{message_text}`"
                         send_telegram(OTP_GROUP_ID, group_msg)
@@ -79,7 +77,7 @@ def handle_webhook():
 
     return "ok", 200
 
-# ------------------- 2. TELEGRAM BOT HANDLER (REPLY KEYBOARD) -------------------
+# ------------------- 2. TELEGRAM BOT HANDLER -------------------
 @app.route('/bot-webhook', methods=['POST'])
 def bot_webhook():
     update = request.get_json(silent=True) or {}
@@ -89,7 +87,6 @@ def bot_webhook():
         text = update["message"].get("text", "")
         args = text.split(" ")
 
-        # নিচে চ্যাটের পাশে স্থায়ী শর্টকাট বাটনগুলো (Reply Keyboard)
         reply_keyboard = {
             "keyboard": [
                 [{"text": "📥 Get Number"}, {"text": "💰 My Balance"}],
@@ -113,9 +110,12 @@ def bot_webhook():
                         s_name = s['section_name']
                         buttons.append([{"text": f"📂 {s_name}", "callback_data": f"sec_{s_name}"}])
                 
-                send_telegram(chat_id, "📂 *Select a Section/Category:*", reply_markup={"inline_keyboard": buttons})
+                if buttons:
+                    send_telegram(chat_id, "📂 *Select a Section/Category:*", reply_markup={"inline_keyboard": buttons})
+                else:
+                    send_telegram(chat_id, "⚠️ বর্তমানে কোনো সেকশন বা ক্যাটাগরি নেই। অ্যাডমিন প্যানেল থেকে আগে সেকশন অ্যাড করুন।")
             except Exception as e:
-                send_telegram(chat_id, "⚠️ বর্তমানে কোনো সেকশন পাওয়া যায়নি।")
+                send_telegram(chat_id, f"⚠️ Error: {e}")
 
         elif text == "💰 My Balance":
             try:
@@ -142,11 +142,10 @@ def bot_webhook():
             if str(chat_id) == str(ADMIN_CHAT_ID):
                 admin_kb = {
                     "inline_keyboard": [
-                        [{"text": "🌐 Open Web Admin Panel", "url": request.host_url + "admin"}],
-                        [{"text": "📢 Broadcast Notice", "callback_data": "admin_notice"}]
+                        [{"text": "🌐 Open Web Admin Panel", "url": request.host_url + "admin"}]
                     ]
                 }
-                send_telegram(chat_id, "👑 *Admin Control Panel*\n\nএকাধিক নম্বর একসাথে যোগ করতে এবং প্যানেল কন্ট্রোল করতে নিচে যান:", reply_markup=admin_kb)
+                send_telegram(chat_id, "👑 *Admin Control Panel*\n\nনিচের লিংকে ক্লিক করে আপনার অ্যাডমিন প্যানেল ওপেন করুন:", reply_markup=admin_kb)
             else:
                 send_telegram(chat_id, "❌ আপনার এই কমান্ড ব্যবহারের অনুমতি নেই!")
 
@@ -166,9 +165,12 @@ def bot_webhook():
                         rate = c['rate']
                         buttons.append([{"text": f"🌍 {c_name} (${rate})", "callback_data": f"getnum_{section_name}_{c_name}"}])
                 
-                send_telegram(chat_id, f"🌍 *Select Country for {section_name}:*", reply_markup={"inline_keyboard": buttons})
+                if buttons:
+                    send_telegram(chat_id, f"🌍 *Select Country for {section_name}:*", reply_markup={"inline_keyboard": buttons})
+                else:
+                    send_telegram(chat_id, "⚠️ এই সেকশনে বর্তমানে কোনো কান্ট্রি নেই।")
             except Exception as e:
-                send_telegram(chat_id, "⚠️ এই সেকশনে কোনো কান্ট্রি নেই।")
+                send_telegram(chat_id, f"⚠️ Error: {e}")
 
         elif data.startswith("getnum_"):
             parts = data.split("_")
@@ -193,43 +195,58 @@ def bot_webhook():
 
     return "ok", 200
 
-# ------------------- 3. WEB ADMIN PANEL (BULK NUMBER ADD) -------------------
+# ------------------- 3. WEB ADMIN PANEL UI & ACTIONS -------------------
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AsrPay Master Admin</title>
+    <title>AsrPay Master Admin Panel</title>
     <style>
         body { background: #0f172a; color: #f8fafc; font-family: sans-serif; margin: 0; padding: 15px; }
-        .card { background: #1e293b; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #334155; }
+        .card { background: #1e293b; padding: 20px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #334155; }
         h2, h3 { color: #38bdf8; margin-top: 0; }
-        input, select, textarea { width: 100%; padding: 10px; margin: 5px 0 12px 0; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; box-sizing: border-box; }
-        .btn { background: #0284c7; color: white; border: none; padding: 10px; width: 100%; border-radius: 6px; font-weight: bold; cursor: pointer; }
+        input, select, textarea { width: 100%; padding: 10px; margin: 8px 0 15px 0; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; box-sizing: border-box; }
+        .btn { background: #0284c7; color: white; border: none; padding: 12px; width: 100%; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 16px; }
         .btn:hover { background: #0369a1; }
+        .msg { background: #065f46; color: #d1fae5; padding: 15px; border-radius: 6px; margin-bottom: 20px; text-align: center; font-weight: bold; }
     </style>
 </head>
 <body>
-    <h2>👑 AsrPay Admin Dashboard</h2>
+    <h2>👑 AsrPay Master Admin Dashboard</h2>
     
     <div class="card">
         <h3>➕ Add Section & Country</h3>
         <form action="/admin/add-structure" method="POST">
-            <input type="text" name="section_name" placeholder="Section Name (e.g. Social Media)" required>
-            <input type="text" name="country_name" placeholder="Country Name (e.g. USA)" required>
-            <input type="number" step="0.01" name="rate" placeholder="Rate per SMS (USD)" required>
+            <label>Section Name (যেমন: Social Media, Gaming):</label>
+            <input type="text" name="section_name" placeholder="e.g. Social Media" required>
+            
+            <label>Country Name (যেমন: USA, UK):</label>
+            <input type="text" name="country_name" placeholder="e.g. USA" required>
+            
+            <label>Rate per SMS (USD):</label>
+            <input type="number" step="0.01" name="rate" placeholder="0.05" required>
+            
             <button class="btn">Save Section & Country</button>
         </form>
     </div>
 
     <div class="card">
-        <h3>📦 Bulk Add Numbers (একসাথে অনেক নম্বর)</h3>
+        <h3>📦 Bulk Add Numbers (একসাথে অনেক নম্বর আপলোড)</h3>
         <form action="/admin/bulk-add" method="POST">
+            <label>Section Name:</label>
             <input type="text" name="section_name" placeholder="Section Name" required>
+            
+            <label>Country Name:</label>
             <input type="text" name="country_name" placeholder="Country Name" required>
-            <input type="number" step="0.01" name="rate" placeholder="Rate (USD)" required>
-            <textarea name="numbers_list" rows="5" placeholder="প্রতি লাইনে একটি করে অথবা কমা দিয়ে নম্বরগুলো দিন..." required></textarea>
+            
+            <label>Rate (USD):</label>
+            <input type="number" step="0.01" name="rate" placeholder="0.05" required>
+            
+            <label>Numbers List (প্রতি লাইনে একটি করে অথবা কমা দিয়ে):</label>
+            <textarea name="numbers_list" rows="6" placeholder="+123456789\n+198765432" required></textarea>
+            
             <button class="btn">Upload All Numbers</button>
         </form>
     </div>
@@ -243,23 +260,38 @@ def admin_dashboard():
 
 @app.route('/admin/add-structure', methods=['POST'])
 def add_structure():
-    sec = request.form.get('section_name')
-    cou = request.form.get('country_name')
-    rate = float(request.form.get('rate', 0.05))
+    sec = request.form.get('section_name', '').strip()
+    cou = request.form.get('country_name', '').strip()
     try:
-        supabase.from_('sections').upsert({'section_name': sec}).execute()
-        supabase.from_('countries').upsert({'section_name': sec, 'country_name': cou, 'rate': rate}).execute()
-        return "Section & Country Added Successfully! <br><br><a href='/admin'>⬅️ Go Back</a>"
+        rate = float(request.form.get('rate', 0.05))
+    except ValueError:
+        rate = 0.05
+
+    try:
+        # Supabase এ সেকশন ও কান্ট্রি সেভ করা
+        supabase.from_('sections').upsert({'section_name': sec}, on_conflict='section_name').execute()
+        supabase.from_('countries').upsert({'section_name': sec, 'country_name': cou, 'rate': rate}, on_conflict='section_name,country_name').execute()
+        return """
+        <body style="background:#0f172a; color:#fff; font-family:sans-serif; text-align:center; padding-top:50px;">
+            <h2 style="color:#38bdf8;">✅ Section & Country Added Successfully!</h2>
+            <br><a href="/admin" style="background:#0284c7; color:#fff; padding:10px 20px; text-decoration:none; border-radius:5px; font-weight:bold;">⬅️ Go Back to Admin Panel</a>
+        </body>
+        """
     except Exception as e:
-        return f"Error: {e} <br><br><a href='/admin'>⬅️ Go Back</a>"
+        return f"<h3 style='color:red;'>Error: {e}</h3><br><a href='/admin'>Go Back</a>"
 
 @app.route('/admin/bulk-add', methods=['POST'])
 def bulk_add():
-    sec = request.form.get('section_name')
-    cou = request.form.get('country_name')
-    rate = float(request.form.get('rate', 0.05))
+    sec = request.form.get('section_name', '').strip()
+    cou = request.form.get('country_name', '').strip()
+    try:
+        rate = float(request.form.get('rate', 0.05))
+    except ValueError:
+        rate = 0.05
+
     raw_text = request.form.get('numbers_list', '')
     
+    # কমা অথবা নতুন লাইন দিয়ে নম্বর আলাদা করা
     numbers = [n.strip() for n in raw_text.replace(',', '\n').split('\n') if n.strip()]
     
     count = 0
@@ -273,9 +305,15 @@ def bulk_add():
                 'status': 'available'
             }).execute()
             count += 1
-        return f"Successfully Added {count} Numbers! <br><br><a href='/admin'>⬅️ Go Back</a>"
+            
+        return f"""
+        <body style="background:#0f172a; color:#fff; font-family:sans-serif; text-align:center; padding-top:50px;">
+            <h2 style="color:#38bdf8;">✅ Successfully Added {count} Numbers!</h2>
+            <br><a href="/admin" style="background:#0284c7; color:#fff; padding:10px 20px; text-decoration:none; border-radius:5px; font-weight:bold;">⬅️ Go Back to Admin Panel</a>
+        </body>
+        """
     except Exception as e:
-        return f"Error: {e} <br><br><a href='/admin'>⬅️ Go Back</a>"
+        return f"<h3 style='color:red;'>Error: {e}</h3><br><a href='/admin'>Go Back</a>"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
