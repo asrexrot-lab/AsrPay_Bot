@@ -16,6 +16,9 @@ WEBHOOK_SECRET = os.getenv("PANEL_WEBHOOK_SECRET", "")
 
 OTP_GROUP_ID = os.getenv("OTP_GROUP_ID", "")
 
+# আপনার টেলিগ্রাম আইডি এখানে দিন (যাতে আপনি টেলিগ্রাম থেকে অ্যাডমিন প্যানেল চালাতে পারেন)
+ADMIN_CHAT_IDS = ["আপনার_টেলিগ্রাম_আইডি_এখানে_দিন"] 
+
 EARNING_PER_SMS = 0.05
 REFERRAL_BONUS_BDT = 3.00
 MIN_WITHDRAWAL_USD = 1.00
@@ -101,7 +104,7 @@ def handle_webhook():
                             if ref_user and hasattr(ref_user, 'data') and ref_user.data:
                                 ref_bal = float(ref_user.data[0].get('balance', 0.0))
                                 supabase.from_('users').update({'balance': ref_bal + REFERRAL_BONUS_BDT}).eq('chat_id', referred_by).execute()
-                                send_telegram(referred_by, f"🎉 *AsrPay Bonus Reward!*\n\nআপনার রেফারকৃত ইউজার $১.০০ আয় করেছেন! আপনি পেয়েছেন *{REFERRAL_BONUS_BDT} BDT* বোনাস! 💰")
+                                send_telegram(referred_by, f"🎉 *AsrPay Bonus Reward!*\n\nআপনার রেফারকৃত ইউজার $১.০০ আয় করেছেন! আপনি পেয়েছেন *{REFERRAL_BONUS_BDT} BDT* বোনাস! 💰")
                             pending_usd -= 1.00
 
                         supabase.from_('users').update({'balance': new_bal, 'pending_usd': pending_usd}).eq('chat_id', chat_id).execute()
@@ -113,7 +116,7 @@ def handle_webhook():
                 else:
                     msg_status = "expired_timeout"
                     if chat_id:
-                        send_telegram(chat_id, f"⚠️ *Time Out!* `{number}` নম্বরটির ৫ মিনিটের মেয়াদ শেষ হয়ে গেছে।")
+                        send_telegram(chat_id, f"⚠️ *Time Out!* `{number}` নম্বরটির ৫ মিনিটের মেয়াদ শেষ হয়ে গেছে।")
 
                 supabase.from_('otp_logs').insert({'chat_id': chat_id, 'phone_number': number, 'service': source, 'otp_message': message_text, 'status': msg_status}).execute()
 
@@ -178,7 +181,7 @@ def bot_webhook():
                         [{"text": "📘 Facebook", "callback_data": "get_facebook"}, {"text": "🌐 Other", "callback_data": "get_other"}]
                     ]
                 }
-                send_telegram(chat_id, "📱 *AsrPay - আপনার প্রয়োজনীয় সার্ভিসটি সিলেক্ট করুন:*", reply_markup=menu)
+                send_telegram(chat_id, "📱 *AsrPay - আপনার প্রয়োজনীয় সার্ভিসটি সিলেক্ট করুন:*", reply_markup=menu)
 
             elif text in ["💳 Balance", "/balance"]:
                 bal = 0.00
@@ -207,9 +210,9 @@ def bot_webhook():
                 ref_link = f"https://t.me/AsrPay_Bot?start={chat_id}"
                 ref_msg = (
                     f"💎 *AsrPay Referral Program*\n\n"
-                    f"আপনার রেফারেল লিংক শেয়ার করে বন্ধুদের ইনভাইট করুন!\n\n"
+                    f"আপনার রেফারেল লিংক শেয়ার করে বন্ধুদের ইনভাইট করুন!\n\n"
                     f"🔗 *লিংক:* `{ref_link}`\n\n"
-                    f"🎁 *রিওয়ার্ড:* আপনার রেফারকৃত ইউজার $১ আয় করলে পাবেন *{REFERRAL_BONUS_BDT} BDT* তাৎক্ষণিক বোনাস!"
+                    f"🎁 *রিওয়ার্ড:* আপনার রেফারকৃত ইউজার $১ আয় করলে পাবেন *{REFERRAL_BONUS_BDT} BDT* তাৎক্ষণিক বোনাস!"
                 )
                 send_telegram(chat_id, ref_msg)
 
@@ -232,6 +235,19 @@ def bot_webhook():
                 )
                 send_telegram(chat_id, sup_msg, reply_markup=reply_markup)
 
+            # টেলিগ্রাম থেকে অ্যাডমিন প্যানেল কমান্ড (/admin)
+            elif text.startswith("/admin"):
+                if str(chat_id) in ADMIN_CHAT_IDS:
+                    admin_inline_keyboard = {
+                        "inline_keyboard": [
+                            [{"text": "🟢 Turn ON Service", "callback_data": "admin_on"}, {"text": "🔴 Turn OFF Service", "callback_data": "admin_off"}],
+                            [{"text": "📊 View Logs", "callback_data": "admin_logs"}]
+                        ]
+                    }
+                    send_telegram(chat_id, "👑 *AsrPay Telegram Admin Panel*\n\nনিচের অপশনগুলো থেকে আপনার কন্ট্রোল সিলেক্ট করুন:", reply_markup=admin_inline_keyboard)
+                else:
+                    send_telegram(chat_id, "❌ আপনার এই প্যানেলটি ব্যবহার করার অনুমতি নেই!")
+
         elif "callback_query" in update:
             callback = update["callback_query"]
             chat_id = callback["message"]["chat"]["id"]
@@ -253,13 +269,37 @@ def bot_webhook():
                 else:
                     send_telegram(chat_id, f"✅ *উইথড্র করার জন্য প্রস্তুত!*\n\nআপনার ব্যালেন্স: *${bal:.2f}*\n\nউইথড্র প্রসেস করতে সরাসরি এডমিনের সাথে যোগাযোগ করুন:\n👉 {admin_user}")
 
+            elif data == "admin_on":
+                if str(chat_id) in ADMIN_CHAT_IDS:
+                    supabase.from_('settings').upsert({'key': 'service_status', 'value': 'ON'}).execute()
+                    send_telegram(chat_id, "✅ সার্ভিস সফলভাবে চালু (ON) করা হয়েছে!")
+
+            elif data == "admin_off":
+                if str(chat_id) in ADMIN_CHAT_IDS:
+                    supabase.from_('settings').upsert({'key': 'service_status', 'value': 'OFF'}).execute()
+                    send_telegram(chat_id, "❌ সার্ভিস সফলভাবে বন্ধ (OFF) করা হয়েছে!")
+
+            elif data == "admin_logs":
+                if str(chat_id) in ADMIN_CHAT_IDS:
+                    try:
+                        logs_res = supabase.from_('otp_logs').select('*').order('id', desc=True).limit(5).execute()
+                        if logs_res and hasattr(logs_res, 'data') and logs_res.data:
+                            log_text = "📊 *Recent OTP Logs (Last 5):*\n\n"
+                            for log in logs_res.data:
+                                log_text += f"📱 `{log.get('phone_number')}`\n🌐 {log.get('service')}\n💬 `{log.get('otp_message')}`\nStatus: {log.get('status')}\n------------------\n"
+                            send_telegram(chat_id, log_text)
+                        else:
+                            send_telegram(chat_id, "⚠️ কোনো লগ পাওয়া যায়নি।")
+                    except Exception as e:
+                        send_telegram(chat_id, f"❌ লগ আনতে সমস্যা হয়েছে: {e}")
+
             elif data.startswith("get_"):
                 if not check_service_status():
-                    send_telegram(chat_id, "⚠️ *বর্তমানে নম্বর সার্ভিস বন্ধ রয়েছে!*")
+                    send_telegram(chat_id, "⚠️ *বর্তমানে নম্বর সার্ভিস বন্ধ রয়েছে!*")
                     return "OK", 200
 
                 service = data.replace("get_", "").upper()
-                send_telegram(chat_id, f"✅ *Selected Service:* `{service}`\n\nঅ্যাডমিন প্যানেল থেকে নম্বর অ্যাসাইন হওয়া পর্যন্ত অপেক্ষা করুন... (মেয়াদ: ৫ মিনিট)")
+                send_telegram(chat_id, f"✅ *Selected Service:* `{service}`\n\nঅ্যাডমিন প্যানেল থেকে নম্বর অ্যাসাইন হওয়া পর্যন্ত অপেক্ষা করুন... (মেয়াদ: ৫ মিনিট)")
 
     except Exception as main_e:
         print(f"Bot Webhook Fatal Error Avoided: {main_e}")
