@@ -52,22 +52,22 @@ def handle_webhook():
         message_text = d.get('message')
 
         try:
-            num_res = supabase.from_('numbers_assigned').select('*').eq('phone_number', number).eq('status', 'active').execute()
+            num_res = supabase.table('numbers_assigned').select('*').eq('phone_number', number).eq('status', 'active').execute()
             if num_res and num_res.data:
                 info = num_res.data[0]
                 chat_id = info.get('chat_id')
                 rate = float(info.get('rate', 0.05))
 
-                user_res = supabase.from_('users').select('balance').eq('chat_id', chat_id).execute()
+                user_res = supabase.table('users').select('balance').eq('chat_id', chat_id).execute()
                 if user_res and user_res.data:
                     curr_bal = float(user_res.data[0].get('balance', 0.0))
                     new_bal = curr_bal + rate
-                    supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
+                    supabase.table('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
 
                     msg = f"📩 *New OTP Received!*\n\n📱 Number: `{number}`\n🌐 Service: `{source}`\n💬 Message: `{message_text}`\n\n💵 Earned: `+${rate:.2f}`"
                     send_telegram(chat_id, msg)
 
-                    supabase.from_('numbers_assigned').update({'status': 'used'}).eq('phone_number', number).execute()
+                    supabase.table('numbers_assigned').update({'status': 'used'}).eq('phone_number', number).execute()
 
                     if OTP_GROUP_ID:
                         group_msg = f"🔥 *New OTP Delivered*\n📱 Number: `{number[:-4]}****`\n🌐 Service: `{source}`\n💬 SMS: `{message_text}`"
@@ -97,13 +97,11 @@ def bot_webhook():
         }
 
         if text.startswith("/start"):
-            if len(args) > 1:
-                ref_code = args[1]
             send_telegram(chat_id, "✨ *Welcome to AsrPay OTP Bot!*\n\nনিচের শর্টকাট মেনু থেকে আপনার প্রয়োজনীয় অপশন সিলেক্ট করুন:", reply_markup=reply_keyboard)
         
         elif text == "📥 Get Number":
             try:
-                sec_res = supabase.from_('sections').select('section_name').execute()
+                sec_res = supabase.table('sections').select('section_name').execute()
                 buttons = []
                 if sec_res and sec_res.data:
                     for s in sec_res.data:
@@ -119,12 +117,12 @@ def bot_webhook():
 
         elif text == "💰 My Balance":
             try:
-                user_res = supabase.from_('users').select('balance').eq('chat_id', str(chat_id)).execute()
+                user_res = supabase.table('users').select('balance').eq('chat_id', str(chat_id)).execute()
                 balance = 0.0
                 if user_res and user_res.data:
                     balance = float(user_res.data[0].get('balance', 0.0))
                 else:
-                    supabase.from_('users').insert({'chat_id': str(chat_id), 'balance': 0.0}).execute()
+                    supabase.table('users').insert({'chat_id': str(chat_id), 'balance': 0.0}).execute()
                 
                 send_telegram(chat_id, f"💰 *Your Current Balance:* `${balance:.2f}`")
             except Exception as e:
@@ -157,7 +155,7 @@ def bot_webhook():
         if data.startswith("sec_"):
             section_name = data.replace("sec_", "")
             try:
-                country_res = supabase.from_('countries').select('*').eq('section_name', section_name).execute()
+                country_res = supabase.table('countries').select('*').eq('section_name', section_name).execute()
                 buttons = []
                 if country_res and country_res.data:
                     for c in country_res.data:
@@ -178,14 +176,14 @@ def bot_webhook():
             country_name = parts[2]
 
             try:
-                num_check = supabase.from_('numbers_pool').select('*').eq('section', section_name).eq('country', country_name).eq('status', 'available').limit(1).execute()
+                num_check = supabase.table('numbers_pool').select('*').eq('section', section_name).eq('country', country_name).eq('status', 'available').limit(1).execute()
                 if num_check and num_check.data:
                     num_data = num_check.data[0]
                     phone = num_data.get('phone_number')
                     rate = num_data.get('rate', 0.05)
 
-                    supabase.from_('numbers_pool').update({'status': 'assigned'}).eq('phone_number', phone).execute()
-                    supabase.from_('numbers_assigned').insert({'chat_id': str(chat_id), 'phone_number': phone, 'status': 'active', 'rate': rate}).execute()
+                    supabase.table('numbers_pool').update({'status': 'assigned'}).eq('phone_number', phone).execute()
+                    supabase.table('numbers_assigned').insert({'chat_id': str(chat_id), 'phone_number': phone, 'status': 'active', 'rate': rate}).execute()
 
                     send_telegram(chat_id, f"📱 *Number Assigned Successfully!*\n\nSection: `{section_name}`\nCountry: `{country_name}`\nNumber: `{phone}`\nRate: `${rate}`\n\nএখন এই নম্বরে কোড পাঠান!")
                 else:
@@ -210,7 +208,6 @@ ADMIN_HTML = """
         input, select, textarea { width: 100%; padding: 10px; margin: 8px 0 15px 0; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; box-sizing: border-box; }
         .btn { background: #0284c7; color: white; border: none; padding: 12px; width: 100%; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 16px; }
         .btn:hover { background: #0369a1; }
-        .msg { background: #065f46; color: #d1fae5; padding: 15px; border-radius: 6px; margin-bottom: 20px; text-align: center; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -219,10 +216,10 @@ ADMIN_HTML = """
     <div class="card">
         <h3>➕ Add Section & Country</h3>
         <form action="/admin/add-structure" method="POST">
-            <label>Section Name (যেমন: Social Media, Gaming):</label>
+            <label>Section Name:</label>
             <input type="text" name="section_name" placeholder="e.g. Social Media" required>
             
-            <label>Country Name (যেমন: USA, UK):</label>
+            <label>Country Name:</label>
             <input type="text" name="country_name" placeholder="e.g. USA" required>
             
             <label>Rate per SMS (USD):</label>
@@ -233,7 +230,7 @@ ADMIN_HTML = """
     </div>
 
     <div class="card">
-        <h3>📦 Bulk Add Numbers (একসাথে অনেক নম্বর আপলোড)</h3>
+        <h3>📦 Bulk Add Numbers</h3>
         <form action="/admin/bulk-add" method="POST">
             <label>Section Name:</label>
             <input type="text" name="section_name" placeholder="Section Name" required>
@@ -244,7 +241,7 @@ ADMIN_HTML = """
             <label>Rate (USD):</label>
             <input type="number" step="0.01" name="rate" placeholder="0.05" required>
             
-            <label>Numbers List (প্রতি লাইনে একটি করে অথবা কমা দিয়ে):</label>
+            <label>Numbers List (কমা অথবা নতুন লাইনে দিন):</label>
             <textarea name="numbers_list" rows="6" placeholder="+123456789\n+198765432" required></textarea>
             
             <button class="btn">Upload All Numbers</button>
@@ -268,9 +265,8 @@ def add_structure():
         rate = 0.05
 
     try:
-        # Supabase এ সেকশন ও কান্ট্রি সেভ করা
-        supabase.from_('sections').upsert({'section_name': sec}, on_conflict='section_name').execute()
-        supabase.from_('countries').upsert({'section_name': sec, 'country_name': cou, 'rate': rate}, on_conflict='section_name,country_name').execute()
+        supabase.table('sections').upsert({'section_name': sec}, on_conflict='section_name').execute()
+        supabase.table('countries').upsert({'section_name': sec, 'country_name': cou, 'rate': rate}, on_conflict='section_name,country_name').execute()
         return """
         <body style="background:#0f172a; color:#fff; font-family:sans-serif; text-align:center; padding-top:50px;">
             <h2 style="color:#38bdf8;">✅ Section & Country Added Successfully!</h2>
@@ -290,14 +286,12 @@ def bulk_add():
         rate = 0.05
 
     raw_text = request.form.get('numbers_list', '')
-    
-    # কমা অথবা নতুন লাইন দিয়ে নম্বর আলাদা করা
     numbers = [n.strip() for n in raw_text.replace(',', '\n').split('\n') if n.strip()]
     
     count = 0
     try:
         for num in numbers:
-            supabase.from_('numbers_pool').insert({
+            supabase.table('numbers_pool').insert({
                 'phone_number': num,
                 'section': sec,
                 'country': cou,
