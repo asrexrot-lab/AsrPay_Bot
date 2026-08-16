@@ -3,7 +3,6 @@ import hmac
 import hashlib
 import requests
 from flask import Flask, request, render_template_string
-from datetime import datetime, timezone
 from supabase import create_client, Client
 
 app = Flask(__name__)
@@ -32,7 +31,7 @@ def send_telegram(chat_id, text, reply_markup=None):
 
 @app.route('/')
 def home():
-    return "🚀 AsrPay OTP Automation Server is Running!", 200
+    return "🚀 AsrPay OTP Automation Server is Running Successfully!", 200
 
 # ------------------- 1. WEBHOOK (KSI IPRN SMS RECEIVED) -------------------
 @app.route('/webhook', methods=['POST'])
@@ -67,14 +66,14 @@ def handle_webhook():
                     new_bal = curr_bal + rate
                     supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
 
-                    # ইউজারের ইনবক্সে ওটিপি পাঠানো
+                    # নির্দিষ্ট ইউজারের ইনবক্সে ওটিপি পাঠানো
                     msg = f"📩 *New OTP Received!*\n\n📱 Number: `{number}`\n🌐 Service: `{source}`\n💬 Message: `{message_text}`\n\n💵 Earned: `+${rate:.2f}`"
                     send_telegram(chat_id, msg)
 
                     # নম্বরটি ইউজ হয়ে গেছে তাই ইনঅ্যাক্টিভ করা
                     supabase.from_('numbers_assigned').update({'status': 'used'}).eq('phone_number', number).execute()
 
-                    # গ্রুপে নোটিশ পাঠানো (যদি থাকে)
+                    # টেলিগ্রাম গ্রুপে নোটিশ পাঠানো
                     if OTP_GROUP_ID:
                         group_msg = f"🔥 *OTP Delivered*\n📱 Number: `{number[:-4]}****`\n🌐 Service: {source}\n💬 SMS: {message_text}"
                         send_telegram(OTP_GROUP_ID, group_msg)
@@ -120,9 +119,9 @@ ADMIN_HTML = """
         body { background: #0f172a; color: #f8fafc; font-family: sans-serif; margin: 0; padding: 15px; }
         .card { background: #1e293b; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #334155; }
         h2, h3 { color: #38bdf8; margin-top: 0; }
-        input, select { width: 100%; padding: 10px; margin: 5px 0 12px 0; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; }
+        input, select { width: 100%; padding: 10px; margin: 5px 0 12px 0; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; box-sizing: border-box; }
         .btn { background: #0284c7; color: white; border: none; padding: 10px; width: 100%; border-radius: 6px; font-weight: bold; cursor: pointer; }
-        .btn-danger { background: #ef4444; }
+        .btn:hover { background: #0369a1; }
     </style>
 </head>
 <body>
@@ -166,7 +165,7 @@ def broadcast_notice():
     notice = request.form.get('notice_text', '')
     if OTP_GROUP_ID:
         send_telegram(OTP_GROUP_ID, f"📢 *Official Notice*\n\n{notice}")
-    return "Notice Sent! <br><a href='/admin'>Go Back</a>"
+    return "Notice Sent Successfully! <br><br><a href='/admin'>⬅️ Go Back</a>"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
