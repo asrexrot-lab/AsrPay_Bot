@@ -8,7 +8,7 @@ from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# Credentials Directly Set
+# Supabase Credentials
 SUPABASE_URL = "https://mfrmudgpjjonycdrvlhe.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1mcm11ZGdwampvbnljZHJ2bGhlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4NzI4NDksImV4cCI6MjEwMjQ0ODg0OX0.gjsVOT0TKdiHJVcEkp5SuJklq65XQVQKzjQ0SmS5l2Q"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8831964761:AAFA8OyHWniT5RlPBpSItoszKei2ahO_U8U")
@@ -19,6 +19,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
 
 EARNING_PER_SMS = 0.05
 REFERRAL_BONUS_BDT = 3.00
+MIN_WITHDRAWAL_USD = 1.00
 NUMBER_TIMEOUT_MINUTES = 5
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -46,8 +47,9 @@ def check_service_status():
 
 @app.route('/')
 def home():
-    return "AsrPay Master Server Running!", 200
+    return "AsrPay Master Server & Admin Panel Running!", 200
 
+# ------------------- 1. API & SMS WEBHOOK (5-MIN EXPIRY CHECK INCLUDED) -------------------
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     try:
@@ -73,6 +75,7 @@ def handle_webhook():
                 chat_id = num_info.get('chat_id')
                 assigned_at_str = num_info.get('assigned_at')
 
+                # 5-MINUTE AUTO EXPIRY SYSTEM
                 is_expired = False
                 if assigned_at_str:
                     assigned_at = datetime.fromisoformat(assigned_at_str.replace('Z', '+00:00'))
@@ -107,6 +110,8 @@ def handle_webhook():
                             msg_status = "failed_to_send_bot"
                 else:
                     msg_status = "expired_timeout"
+                    if chat_id:
+                        send_telegram(chat_id, f"⚠️ *মেসেজ টাইমআউট!* `{number}` নম্বরটির ৫ মিনিটের মেয়াদ শেষ হয়ে গেছে।")
 
                 supabase.from_('otp_logs').insert({'chat_id': chat_id, 'phone_number': number, 'service': source, 'otp_message': message_text, 'status': msg_status}).execute()
 
@@ -118,6 +123,7 @@ def handle_webhook():
 
     return "OK", 200
 
+# ------------------- 2. TELEGRAM BOT (WITHDRAWAL & BUTTONS SYSTEM) -------------------
 @app.route('/bot-webhook', methods=['POST'])
 def bot_webhook():
     try:
@@ -144,7 +150,8 @@ def bot_webhook():
 
                 main_keyboard = {
                     "keyboard": [
-                        [{"text": "📱 Get Number"}, {"text": "💳 Balance"}]
+                        [{"text": "📱 Get Number"}, {"text": "💳 Balance"}],
+                        [{"text": "💸 Withdraw"}, {"text": "🔗 Referral Link"}]
                     ],
                     "resize_keyboard": True
                 }
@@ -175,6 +182,25 @@ def bot_webhook():
 
                 send_telegram(chat_id, f"💳 *AsrPay Balance:* ${bal:.2f}")
 
+            # WITHDRAWAL SYSTEM
+            elif text in ["💸 Withdraw", "/withdraw"]:
+                bal = 0.00
+                try:
+                    res = supabase.from_('users').select('balance').eq('chat_id', chat_id).execute()
+                    if res and hasattr(res, 'data') and res.data:
+                        bal = float(res.data[0].get('balance', 0.00))
+                except Exception:
+                    pass
+
+                if bal < MIN_WITHDRAWAL_USD:
+                    send_telegram(chat_id, f"❌ *Withdrawal Failed!*\n\nআপনার ব্যালেন্স: *${bal:.2f}*\nসর্বনিম্ন উইথড্র সীমা: *${MIN_WITHDRAWAL_USD:.2f}*")
+                else:
+                    send_telegram(chat_id, f"✅ *উইথড্র রিকোয়েস্ট করতে অ্যাডমিনের সাথে যোগাযোগ করুন:*\n\nআপনার ব্যালেন্স: *${bal:.2f}*\nAdmin: @AsrPayAdmin")
+
+            elif text in ["🔗 Referral Link", "/referral"]:
+                ref_link = f"https://t.me/AsrPay_Bot?start={chat_id}"
+                send_telegram(chat_id, f"🔗 *আপনার রেফারেল লিংক:*\n`{ref_link}`\n\nপ্রতিটি সফল রেফারেলের জন্য পাবেন বোনাস!")
+
         elif "callback_query" in update:
             callback = update["callback_query"]
             chat_id = callback["message"]["chat"]["id"]
@@ -184,13 +210,14 @@ def bot_webhook():
                 return "OK", 200
 
             service = callback["data"].replace("get_", "").upper()
-            send_telegram(chat_id, f"✅ Selected: *{service}*\n\nআপনার জন্য নম্বর প্রসেস করা হচ্ছে...")
+            send_telegram(chat_id, f"✅ Selected: *{service}*\n\nঅ্যাডমিন প্যানেল থেকে আপনার নম্বরের জন্য অপেক্ষা করুন... (মেয়াদ: ৫ মিনিট)")
 
     except Exception as main_e:
         print(f"Bot Webhook Fatal Error Avoided: {main_e}")
 
     return "OK", 200
 
+# ------------------- 3. ADMIN PANEL SYSTEM -------------------
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html>
@@ -220,12 +247,33 @@ ADMIN_HTML = """
         {% endif %}
     </div>
     <div class="card">
-        <h3>📱 Assign Number to User (5-Min Limit)</h3>
+        <h3>📱 Assign Number to User (5-Min Auto Expiry Limit)</h3>
         <form action="/admin/assign-number" method="POST">
-            <input type="text" name="phone_number" placeholder="Phone Number" required><br>
+            <input type="text" name="phone_number" placeholder="Phone Number (+880...)" required><br>
             <input type="text" name="chat_id" placeholder="User Telegram Chat ID" required><br>
             <button type="submit" style="background: #28a745;">Assign Number</button>
         </form>
+    </div>
+    <div class="card">
+        <h3>📩 Recent OTP Logs</h3>
+        <table>
+            <tr>
+                <th>User Chat ID</th>
+                <th>Phone Number</th>
+                <th>Service</th>
+                <th>OTP Message</th>
+                <th>Status</th>
+            </tr>
+            {% for log in logs %}
+            <tr>
+                <td>{{ log.chat_id }}</td>
+                <td>{{ log.phone_number }}</td>
+                <td>{{ log.service }}</td>
+                <td><code>{{ log.otp_message }}</code></td>
+                <td>{{ log.status }}</td>
+            </tr>
+            {% endfor %}
+        </table>
     </div>
 </body>
 </html>
@@ -234,6 +282,7 @@ ADMIN_HTML = """
 @app.route('/admin')
 def admin_panel():
     status = 'ON'
+    logs = []
     try:
         status_res = supabase.from_('settings').select('value').eq('key', 'service_status').execute()
         if status_res and hasattr(status_res, 'data') and status_res.data:
@@ -241,7 +290,14 @@ def admin_panel():
     except Exception:
         status = 'ON'
 
-    return render_template_string(ADMIN_HTML, status=status)
+    try:
+        logs_res = supabase.from_('otp_logs').select('*').order('id', desc=True).limit(10).execute()
+        if logs_res and hasattr(logs_res, 'data') and logs_res.data:
+            logs = logs_res.data
+    except Exception:
+        logs = []
+
+    return render_template_string(ADMIN_HTML, status=status, logs=logs)
 
 @app.route('/admin/toggle-service/<state>')
 def toggle_service(state):
