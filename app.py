@@ -2,12 +2,11 @@ import os
 import hmac
 import hashlib
 import requests
-from flask import Flask, request, render_template_string
+from flask import Flask, request
 from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# Supabase & Telegram Config
 SUPABASE_URL = "https://mfrmudgpjjonycdrvlhe.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1mcm11ZGdwampvbnljZHJ2bGhlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4NzI4NDksImV4cCI6MjEwMjQ0ODg0OX0.gjsVOT0TKdiHJVcEkp5SuJklq65XQVQKzjQ0SmS5l2Q"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8831964761:AAFA8OyHWniT5RlPBpSItoszKei2ahO_U8U")
@@ -16,6 +15,9 @@ OTP_GROUP_ID = "-1003980634872"
 ADMIN_CHAT_ID = "8745487398"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+#অ্যাডমিনদের সাময়িক স্টেট বা মেমোরি ট্র্যাক করার জন্য
+admin_sessions = {}
 
 def send_telegram(chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -31,7 +33,7 @@ def send_telegram(chat_id, text, reply_markup=None):
 
 @app.route('/')
 def home():
-    return "🚀 AsrPay OTP Automation Server is Running Successfully!", 200
+    return "🚀 AsrPay Bot Admin System is Running!", 200
 
 # ------------------- 1. WEBHOOK (SMS RECEIVED) -------------------
 @app.route('/webhook', methods=['POST'])
@@ -83,7 +85,7 @@ def bot_webhook():
     update = request.get_json(silent=True) or {}
     
     if "message" in update:
-        chat_id = update["message"]["chat"]["id"]
+        chat_id = str(update["message"]["chat"]["id"])
         text = update["message"].get("text", "")
         args = text.split(" ")
 
@@ -96,7 +98,64 @@ def bot_webhook():
             "persistent": True
         }
 
+        # অ্যাডমিন যদি লাইভ টেক্সট ইনপুট দেয় (যেমন ফরম্যাট অনুযায়ী নম্বর বা কান্ট্রি পাঠানো)
+        if chat_id == str(ADMIN_CHAT_ID) and chat_id in admin_sessions:
+            step = admin_sessions[chat_id].get("step")
+            
+            if step == "waiting_section":
+                admin_sessions[chat_id]["section"] = text
+                admin_sessions[chatid]["step"] = "waiting_country"
+                send_telegram(chat_id, "🌍 এখন **Country Name** লিখুন (যেমন: USA):")
+                return "ok", 200
+                
+            elif step == "waiting_country":
+                admin_sessions[chat_id]["country"] = text
+                admin_sessions[chat_id]["step"] = "waiting_rate"
+                send_telegram(chat_id, "💵 এখন প্রতি SMS এর **Rate (USD)** লিখুন (যেমন: 0.05):")
+                return "ok", 200
+                
+            elif step == "waiting_rate":
+                try:
+                    rate = float(text)
+                    admin_sessions[chat_id]["rate"] = rate
+                    admin_sessions[chat_id]["step"] = "waiting_numbers"
+                    send_telegram(chat_id, "📦 এখন একসাথে **নম্বরগুলো** দিন (প্রতি লাইনে একটি করে অথবা কমা দিয়ে):")
+                except ValueError:
+                    send_telegram(chat_id, "❌ সঠিক রেট দিন (সংখ্যায়, যেমন: 0.05):")
+                return "ok", 200
+                
+            elif step == "waiting_numbers":
+                sec = admin_sessions[chat_id]["section"]
+                cou = admin_sessions[chat_id]["country"]
+                rate = admin_sessions[chat_id]["rate"]
+                
+                numbers = [n.strip() for n in text.replace(',', '\n').split('\n') if n.strip()]
+                
+                try:
+                    supabase.table('sections').upsert({'section_name': sec}, on_conflict='section_name').execute()
+                    supabase.table('countries').upsert({'section_name': sec, 'country_name': cou, 'rate': rate}, on_conflict='section_name,country_name').execute()
+                    
+                    count = 0
+                    for num in numbers:
+                        supabase.table('numbers_pool').insert({
+                            'phone_number': num,
+                            'section': sec,
+                            'country': cou,
+                            'rate': rate,
+                            'status': 'available'
+                        }).execute()
+                        count += 1
+                        
+                    del admin_sessions[chat_id]
+                    send_telegram(chat_id, f"✅ সফলভাবে **{count}টি নম্বর** যোগ করা হয়েছে!\n\n📂 Section: `{sec}`\n🌍 Country: `{cou}`\n💵 Rate: `${rate}`", reply_markup=reply_keyboard)
+                except Exception as e:
+                    send_telegram(chat_id, f"❌ ডেটাবেজে সেভ করতে সমস্যা হয়েছে: {e}")
+                    del admin_sessions[chat_id]
+                return "ok", 200
+
         if text.startswith("/start"):
+            if chat_id in admin_sessions:
+                del admin_sessions[chat_id]
             send_telegram(chat_id, "✨ *Welcome to AsrPay OTP Bot!*\n\nনিচের শর্টকাট মেনু থেকে আপনার প্রয়োজনীয় অপশন সিলেক্ট করুন:", reply_markup=reply_keyboard)
         
         elif text == "📥 Get Number":
@@ -111,18 +170,18 @@ def bot_webhook():
                 if buttons:
                     send_telegram(chat_id, "📂 *Select a Section/Category:*", reply_markup={"inline_keyboard": buttons})
                 else:
-                    send_telegram(chat_id, "⚠️ বর্তমানে কোনো সেকশন বা ক্যাটাগরি নেই। অ্যাডমিন প্যানেল থেকে আগে সেকশন অ্যাড করুন।")
+                    send_telegram(chat_id, "⚠️ বর্তমানে কোনো সেকশন বা ক্যাটাগরি নেই।")
             except Exception as e:
                 send_telegram(chat_id, f"⚠️ Error: {e}")
 
         elif text == "💰 My Balance":
             try:
-                user_res = supabase.table('users').select('balance').eq('chat_id', str(chat_id)).execute()
+                user_res = supabase.table('users').select('balance').eq('chat_id', chat_id).execute()
                 balance = 0.0
                 if user_res and user_res.data:
                     balance = float(user_res.data[0].get('balance', 0.0))
                 else:
-                    supabase.table('users').insert({'chat_id': str(chat_id), 'balance': 0.0}).execute()
+                    supabase.table('users').insert({'chat_id': chat_id, 'balance': 0.0}).execute()
                 
                 send_telegram(chat_id, f"💰 *Your Current Balance:* `${balance:.2f}`")
             except Exception as e:
@@ -136,23 +195,28 @@ def bot_webhook():
         elif text == "☎️ Support":
             send_telegram(chat_id, "☎️ *Support:* যেকোনো সমস্যায় যোগাযোগ করুন: @AsrPaySupport")
 
-        elif text.startswith("/admin"):
-            if str(chat_id) == str(ADMIN_CHAT_ID):
+        elif text == "/admin":
+            if chat_id == str(ADMIN_CHAT_ID):
                 admin_kb = {
                     "inline_keyboard": [
-                        [{"text": "🌐 Open Web Admin Panel", "url": request.host_url + "admin"}]
+                        [{"text": "➕ Bulk Add Numbers & Section", "callback_data": "admin_start_add"}]
                     ]
                 }
-                send_telegram(chat_id, "👑 *Admin Control Panel*\n\nনিচের লিংকে ক্লিক করে আপনার অ্যাডমিন প্যানেল ওপেন করুন:", reply_markup=admin_kb)
+                send_telegram(chat_id, "👑 *Bot Admin Panel*\n\nবটের ভেতর থেকেই নম্বর এবং সেকশন ম্যানেজ করতে নিচে ক্লিক করুন:", reply_markup=admin_kb)
             else:
                 send_telegram(chat_id, "❌ আপনার এই কমান্ড ব্যবহারের অনুমতি নেই!")
 
     elif "callback_query" in update:
         query = update["callback_query"]
-        chat_id = query["message"]["chat"]["id"]
+        chat_id = str(query["message"]["chat"]["id"])
         data = query["data"]
 
-        if data.startswith("sec_"):
+        if data == "admin_start_add":
+            if chat_id == str(ADMIN_CHAT_ID):
+                admin_sessions[chat_id] = {"step": "waiting_section"}
+                send_telegram(chat_id, "📂 নতুন সেকশন বা ক্যাটাগরির নাম লিখুন (যেমন: Social Media বা Gaming):")
+
+        elif data.startswith("sec_"):
             section_name = data.replace("sec_", "")
             try:
                 country_res = supabase.table('countries').select('*').eq('section_name', section_name).execute()
@@ -183,7 +247,7 @@ def bot_webhook():
                     rate = num_data.get('rate', 0.05)
 
                     supabase.table('numbers_pool').update({'status': 'assigned'}).eq('phone_number', phone).execute()
-                    supabase.table('numbers_assigned').insert({'chat_id': str(chat_id), 'phone_number': phone, 'status': 'active', 'rate': rate}).execute()
+                    supabase.table('numbers_assigned').insert({'chat_id': chat_id, 'phone_number': phone, 'status': 'active', 'rate': rate}).execute()
 
                     send_telegram(chat_id, f"📱 *Number Assigned Successfully!*\n\nSection: `{section_name}`\nCountry: `{country_name}`\nNumber: `{phone}`\nRate: `${rate}`\n\nএখন এই নম্বরে কোড পাঠান!")
                 else:
@@ -192,122 +256,6 @@ def bot_webhook():
                 send_telegram(chat_id, f"❌ Error: {e}")
 
     return "ok", 200
-
-# ------------------- 3. WEB ADMIN PANEL UI & ACTIONS -------------------
-ADMIN_HTML = """
-<!DOCTYPE html>
-<html lang="bn">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AsrPay Master Admin Panel</title>
-    <style>
-        body { background: #0f172a; color: #f8fafc; font-family: sans-serif; margin: 0; padding: 15px; }
-        .card { background: #1e293b; padding: 20px; border-radius: 10px; margin-bottom: 20px; border: 1px solid #334155; }
-        h2, h3 { color: #38bdf8; margin-top: 0; }
-        input, select, textarea { width: 100%; padding: 10px; margin: 8px 0 15px 0; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 6px; box-sizing: border-box; }
-        .btn { background: #0284c7; color: white; border: none; padding: 12px; width: 100%; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 16px; }
-        .btn:hover { background: #0369a1; }
-    </style>
-</head>
-<body>
-    <h2>👑 AsrPay Master Admin Dashboard</h2>
-    
-    <div class="card">
-        <h3>➕ Add Section & Country</h3>
-        <form action="/admin/add-structure" method="POST">
-            <label>Section Name:</label>
-            <input type="text" name="section_name" placeholder="e.g. Social Media" required>
-            
-            <label>Country Name:</label>
-            <input type="text" name="country_name" placeholder="e.g. USA" required>
-            
-            <label>Rate per SMS (USD):</label>
-            <input type="number" step="0.01" name="rate" placeholder="0.05" required>
-            
-            <button class="btn">Save Section & Country</button>
-        </form>
-    </div>
-
-    <div class="card">
-        <h3>📦 Bulk Add Numbers</h3>
-        <form action="/admin/bulk-add" method="POST">
-            <label>Section Name:</label>
-            <input type="text" name="section_name" placeholder="Section Name" required>
-            
-            <label>Country Name:</label>
-            <input type="text" name="country_name" placeholder="Country Name" required>
-            
-            <label>Rate (USD):</label>
-            <input type="number" step="0.01" name="rate" placeholder="0.05" required>
-            
-            <label>Numbers List (কমা অথবা নতুন লাইনে দিন):</label>
-            <textarea name="numbers_list" rows="6" placeholder="+123456789\n+198765432" required></textarea>
-            
-            <button class="btn">Upload All Numbers</button>
-        </form>
-    </div>
-</body>
-</html>
-"""
-
-@app.route('/admin')
-def admin_dashboard():
-    return render_template_string(ADMIN_HTML)
-
-@app.route('/admin/add-structure', methods=['POST'])
-def add_structure():
-    sec = request.form.get('section_name', '').strip()
-    cou = request.form.get('country_name', '').strip()
-    try:
-        rate = float(request.form.get('rate', 0.05))
-    except ValueError:
-        rate = 0.05
-
-    try:
-        supabase.table('sections').upsert({'section_name': sec}, on_conflict='section_name').execute()
-        supabase.table('countries').upsert({'section_name': sec, 'country_name': cou, 'rate': rate}, on_conflict='section_name,country_name').execute()
-        return """
-        <body style="background:#0f172a; color:#fff; font-family:sans-serif; text-align:center; padding-top:50px;">
-            <h2 style="color:#38bdf8;">✅ Section & Country Added Successfully!</h2>
-            <br><a href="/admin" style="background:#0284c7; color:#fff; padding:10px 20px; text-decoration:none; border-radius:5px; font-weight:bold;">⬅️ Go Back to Admin Panel</a>
-        </body>
-        """
-    except Exception as e:
-        return f"<h3 style='color:red;'>Error: {e}</h3><br><a href='/admin'>Go Back</a>"
-
-@app.route('/admin/bulk-add', methods=['POST'])
-def bulk_add():
-    sec = request.form.get('section_name', '').strip()
-    cou = request.form.get('country_name', '').strip()
-    try:
-        rate = float(request.form.get('rate', 0.05))
-    except ValueError:
-        rate = 0.05
-
-    raw_text = request.form.get('numbers_list', '')
-    numbers = [n.strip() for n in raw_text.replace(',', '\n').split('\n') if n.strip()]
-    
-    count = 0
-    try:
-        for num in numbers:
-            supabase.table('numbers_pool').insert({
-                'phone_number': num,
-                'section': sec,
-                'country': cou,
-                'rate': rate,
-                'status': 'available'
-            }).execute()
-            count += 1
-            
-        return f"""
-        <body style="background:#0f172a; color:#fff; font-family:sans-serif; text-align:center; padding-top:50px;">
-            <h2 style="color:#38bdf8;">✅ Successfully Added {count} Numbers!</h2>
-            <br><a href="/admin" style="background:#0284c7; color:#fff; padding:10px 20px; text-decoration:none; border-radius:5px; font-weight:bold;">⬅️ Go Back to Admin Panel</a>
-        </body>
-        """
-    except Exception as e:
-        return f"<h3 style='color:red;'>Error: {e}</h3><br><a href='/admin'>Go Back</a>"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
