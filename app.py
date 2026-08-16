@@ -17,7 +17,7 @@ WEBHOOK_SECRET = os.getenv("PANEL_WEBHOOK_SECRET", "")
 OTP_GROUP_ID = os.getenv("OTP_GROUP_ID", "")
 
 # আপনার টেলিগ্রাম আইডি এখানে দিন (যাতে আপনি টেলিগ্রাম থেকে অ্যাডমিন প্যানেল চালাতে পারেন)
-ADMIN_CHAT_IDS = ["আপনার_টেলিগ্রাম_আইডি_এখানে_দিন"] 
+ADMIN_CHAT_IDS = ["8745487398"] 
 
 EARNING_PER_SMS = 0.05
 REFERRAL_BONUS_BDT = 3.00
