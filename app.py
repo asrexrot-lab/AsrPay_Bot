@@ -12,7 +12,7 @@ SUPABASE_URL = "https://mfrmudgpjjonycdrvlhe.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1mcm11ZGdwampvbnljZHJ2bGhlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY4NzI4NDksImV4cCI6MjEwMjQ0ODg0OX0.gjsVOT0TKdiHJVcEkp5SuJklq65XQVQKzjQ0SmS5l2Q"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8831964761:AAFA8OyHWniT5RlPBpSItoszKei2ahO_U8U")
 WEBHOOK_SECRET = os.getenv("PANEL_WEBHOOK_SECRET", "")
-OTP_GROUP_ID = os.getenv("OTP_GROUP_ID", "")
+OTP_GROUP_ID = "-1003980634872"  # আপনার দেওয়া গ্রুপ আইডি কনফিগার করা হলো
 ADMIN_CHAT_ID = "8745487398"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -31,9 +31,9 @@ def send_telegram(chat_id, text, reply_markup=None):
 
 @app.route('/')
 def home():
-    return "🚀 AsrPay Advanced OTP Automation Server is Running!", 200
+    return "🚀 AsrPay OTP Automation Server is Running Successfully!", 200
 
-# ------------------- 1. WEBHOOK (KSI IPRN SMS RECEIVED) -------------------
+# ------------------- 1. WEBHOOK (SMS RECEIVED) -------------------
 @app.route('/webhook', methods=['POST'])
 def handle_webhook():
     raw_data = request.get_data()
@@ -64,20 +64,22 @@ def handle_webhook():
                     new_bal = curr_bal + rate
                     supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
 
+                    # ইউজারের ইনবক্সে ওটিপি পাঠানো
                     msg = f"📩 *New OTP Received!*\n\n📱 Number: `{number}`\n🌐 Service: `{source}`\n💬 Message: `{message_text}`\n\n💵 Earned: `+${rate:.2f}`"
                     send_telegram(chat_id, msg)
 
                     supabase.from_('numbers_assigned').update({'status': 'used'}).eq('phone_number', number).execute()
 
+                    # নির্দিষ্ট গ্রুপে নোটিফিকেশন পাঠানো
                     if OTP_GROUP_ID:
-                        group_msg = f"🔥 *OTP Delivered*\n📱 Number: `{number[:-4]}****`\n🌐 Service: {source}\n💬 SMS: {message_text}"
+                        group_msg = f"🔥 *New OTP Delivered*\n📱 Number: `{number[:-4]}****`\n🌐 Service: `{source}`\n💬 SMS: `{message_text}`"
                         send_telegram(OTP_GROUP_ID, group_msg)
         except Exception as e:
             print(f"Webhook DB error: {e}")
 
     return "ok", 200
 
-# ------------------- 2. TELEGRAM BOT HANDLER -------------------
+# ------------------- 2. TELEGRAM BOT HANDLER (REPLY KEYBOARD) -------------------
 @app.route('/bot-webhook', methods=['POST'])
 def bot_webhook():
     update = request.get_json(silent=True) or {}
@@ -87,20 +89,55 @@ def bot_webhook():
         text = update["message"].get("text", "")
         args = text.split(" ")
 
-        # রেফারেল সিস্টেম হ্যান্ডেল করা (/start ref_12345)
+        # নিচে চ্যাটের পাশে স্থায়ী শর্টকাট বাটনগুলো (Reply Keyboard)
+        reply_keyboard = {
+            "keyboard": [
+                [{"text": "📥 Get Number"}, {"text": "💰 My Balance"}],
+                [{"text": "👥 Referral"}, {"text": "☎️ Support"}]
+            ],
+            "resize_keyboard": True,
+            "persistent": True
+        }
+
         if text.startswith("/start"):
             if len(args) > 1:
                 ref_code = args[1]
-                # রেফারেল ডাটা সেভ বা কাউন্ট করার লজিক এখানে থাকতে পারে
-            
-            main_menu = {
-                "inline_keyboard": [
-                    [{"text": "📥 Get Number", "callback_data": "menu_sections"}, {"text": "💰 Balance", "callback_data": "my_balance"}],
-                    [{"text": "👥 Referral", "callback_data": "my_referral"}, {"text": "☎️ Support", "url": "https://t.me/AsrPaySupport"}]
-                ]
-            }
-            send_telegram(chat_id, "✨ *Welcome to AsrPay OTP Bot!*\n\nনিচের মেনু থেকে আপনার প্রয়োজনীয় অপشن সিলেক্ট করুন:", reply_markup=main_menu)
+            send_telegram(chat_id, "✨ *Welcome to AsrPay OTP Bot!*\n\nনিচের শর্টকাট মেনু থেকে আপনার প্রয়োজনীয় অপশন সিলেক্ট করুন:", reply_markup=reply_keyboard)
         
+        elif text == "📥 Get Number":
+            try:
+                sec_res = supabase.from_('sections').select('section_name').execute()
+                buttons = []
+                if sec_res and sec_res.data:
+                    for s in sec_res.data:
+                        s_name = s['section_name']
+                        buttons.append([{"text": f"📂 {s_name}", "callback_data": f"sec_{s_name}"}])
+                
+                send_telegram(chat_id, "📂 *Select a Section/Category:*", reply_markup={"inline_keyboard": buttons})
+            except Exception as e:
+                send_telegram(chat_id, "⚠️ বর্তমানে কোনো সেকশন পাওয়া যায়নি।")
+
+        elif text == "💰 My Balance":
+            try:
+                user_res = supabase.from_('users').select('balance').eq('chat_id', str(chat_id)).execute()
+                balance = 0.0
+                if user_res and user_res.data:
+                    balance = float(user_res.data[0].get('balance', 0.0))
+                else:
+                    supabase.from_('users').insert({'chat_id': str(chat_id), 'balance': 0.0}).execute()
+                
+                send_telegram(chat_id, f"💰 *Your Current Balance:* `${balance:.2f}`")
+            except Exception as e:
+                send_telegram(chat_id, f"❌ Error: {e}")
+
+        elif text == "👥 Referral":
+            bot_username = "AsrPayBot"
+            ref_link = f"https://t.me/{bot_username}?start=ref_{chat_id}"
+            send_telegram(chat_id, f"👥 *Referral Program*\n\nআপনার রেফারেল লিংক:\n`{ref_link}`\n\nএই লিংকের মাধ্যমে বন্ধুরা জয়েন করলে আপনি বোনাস পাবেন!")
+
+        elif text == "☎️ Support":
+            send_telegram(chat_id, "☎️ *Support:* যেকোনো সমস্যায় যোগাযোগ করুন: @AsrPaySupport")
+
         elif text.startswith("/admin"):
             if str(chat_id) == str(ADMIN_CHAT_ID):
                 admin_kb = {
@@ -118,24 +155,8 @@ def bot_webhook():
         chat_id = query["message"]["chat"]["id"]
         data = query["data"]
 
-        if data == "menu_sections":
-            # ডাটাবেজ থেকে সেকশন বা ক্যাটাগরি লোড করা
-            try:
-                sec_res = supabase.from_('sections').select('section_name').execute()
-                buttons = []
-                if sec_res and sec_res.data:
-                    for s in sec_res.data:
-                        s_name = s['section_name']
-                        buttons.append([{"text": f"📂 {s_name}", "callback_data": f"sec_{s_name}"}])
-                
-                buttons.append([{"text": "⬅️ Back to Home", "callback_data": "home_menu"}])
-                send_telegram(chat_id, "📂 *Select a Section/Category:*", reply_markup={"inline_keyboard": buttons})
-            except Exception as e:
-                send_telegram(chat_id, "⚠️ বর্তমানে কোনো সেকশন পাওয়া যায়নি।")
-
-        elif data.startswith("sec_"):
+        if data.startswith("sec_"):
             section_name = data.replace("sec_", "")
-            # নির্দিষ্ট সেকশনের কান্ট্রি লোড করা
             try:
                 country_res = supabase.from_('countries').select('*').eq('section_name', section_name).execute()
                 buttons = []
@@ -145,7 +166,6 @@ def bot_webhook():
                         rate = c['rate']
                         buttons.append([{"text": f"🌍 {c_name} (${rate})", "callback_data": f"getnum_{section_name}_{c_name}"}])
                 
-                buttons.append([{"text": "⬅️ Back", "callback_data": "menu_sections"}])
                 send_telegram(chat_id, f"🌍 *Select Country for {section_name}:*", reply_markup={"inline_keyboard": buttons})
             except Exception as e:
                 send_telegram(chat_id, "⚠️ এই সেকশনে কোনো কান্ট্রি নেই।")
@@ -170,33 +190,6 @@ def bot_webhook():
                     send_telegram(chat_id, "⚠️ দুঃখিত, এই কান্ট্রিতে বর্তমানে কোনো নম্বর খালি নেই।")
             except Exception as e:
                 send_telegram(chat_id, f"❌ Error: {e}")
-
-        elif data == "my_balance":
-            try:
-                user_res = supabase.from_('users').select('balance').eq('chat_id', str(chat_id)).execute()
-                balance = 0.0
-                if user_res and user_res.data:
-                    balance = float(user_res.data[0].get('balance', 0.0))
-                else:
-                    supabase.from_('users').insert({'chat_id': str(chat_id), 'balance': 0.0}).execute()
-                
-                send_telegram(chat_id, f"💰 *Your Current Balance:* `${balance:.2f}`")
-            except Exception as e:
-                send_telegram(chat_id, f"❌ Error: {e}")
-
-        elif data == "my_referral":
-            bot_username = "AsrPayBot" # আপনার বটের ইউজারনেম দিন
-            ref_link = f"https://t.me/{bot_username}?start=ref_{chat_id}"
-            send_telegram(chat_id, f"👥 *Referral Program*\n\nআপনার রেফারেল লিংক:\n`{ref_link}`\n\nএই লিংকের মাধ্যমে বন্ধুরা জয়েন করলে আপনি বোনাস পাবেন!")
-
-        elif data == "home_menu":
-            main_menu = {
-                "inline_keyboard": [
-                    [{"text": "📥 Get Number", "callback_data": "menu_sections"}, {"text": "💰 Balance", "callback_data": "my_balance"}],
-                    [{"text": "👥 Referral", "callback_data": "my_referral"}, {"text": "☎️ Support", "url": "https://t.me/AsrPaySupport"}]
-                ]
-            }
-            send_telegram(chat_id, "✨ *Main Menu:*", reply_markup=main_menu)
 
     return "ok", 200
 
@@ -267,7 +260,6 @@ def bulk_add():
     rate = float(request.form.get('rate', 0.05))
     raw_text = request.form.get('numbers_list', '')
     
-    # কমা অথবা নতুন লাইন দিয়ে নম্বর আলাদা করা
     numbers = [n.strip() for n in raw_text.replace(',', '\n').split('\n') if n.strip()]
     
     count = 0
