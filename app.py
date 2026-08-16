@@ -14,9 +14,10 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8831964761:AAFA8OyHWniT5RlPBpSItoszKei2ahO_U8U")
 WEBHOOK_SECRET = os.getenv("PANEL_WEBHOOK_SECRET", "")
 
-OTP_GROUP_ID = os.getenv("OTP_GROUP_ID", "")
+# Your Live API Key Integration
+LIVE_SECRET_API_KEY = "Sk_live_5OMGmu5v4UY3pXjDokxOtOVaba25WSi55cfYrc3h"
 
-# আপনার অ্যাডমিন চ্যাট আইডি
+OTP_GROUP_ID = os.getenv("OTP_GROUP_ID", "")
 ADMIN_CHAT_IDS = ["8745487398"] 
 
 EARNING_PER_SMS = 0.05
@@ -62,7 +63,7 @@ def is_user_banned(chat_id):
 
 @app.route('/')
 def home():
-    return "🚀 AsrPay Professional Master Server Running (Mobile Friendly & Fast)!", 200
+    return "🚀 AsrPay Professional Master Server Running with Live API!", 200
 
 # ------------------- 1. API & SMS WEBHOOK -------------------
 @app.route('/webhook', methods=['POST'])
@@ -140,7 +141,6 @@ def handle_webhook():
 
     return "OK", 200
 
-# Global dictionary to track withdrawal method selection states temporarily
 user_wd_state = {}
 
 # ------------------- 2. TELEGRAM BOT WORKFLOW -------------------
@@ -153,9 +153,8 @@ def bot_webhook():
             chat_id = update["message"]["chat"]["id"]
             text = update["message"].get("text", "")
 
-            # Check Ban Status
             if is_user_banned(chat_id):
-                send_telegram(chat_id, "❌ *আপনার এই প্যানেলটি ব্যবহার করার অনুমতি নেই!* (আপনার অ্যাকাউন্টটি ব্লক/ব্যান করা হয়েছে)")
+                send_telegram(chat_id, "❌ *আপনার এই প্যানেলটি ব্যবহার করার অনুমতি নেই!*")
                 return "OK", 200
 
             if text.startswith("/start"):
@@ -192,7 +191,7 @@ def bot_webhook():
 
             elif text in ["📱 Get Number", "/getnumber"]:
                 if not check_service_status():
-                    send_telegram(chat_id, "⚠️ *দুঃখিত! বর্তমানে নম্বর সার্ভিস সাময়িকভাবে বন্ধ আছে। পরে চেষ্টা করুন।*")
+                    send_telegram(chat_id, "⚠️ *দুঃখিত! বর্তমানে নম্বর সার্ভিস সাময়িকভাবে বন্ধ আছে।*")
                     return "OK", 200
 
                 menu = {
@@ -233,7 +232,7 @@ def bot_webhook():
                     f"💎 *AsrPay Referral Program*\n\n"
                     f"আপনার রেফারেল লিংক শেয়ার করে বন্ধুদের ইনভাইট করুন!\n\n"
                     f"🔗 *লিংক:* `{ref_link}`\n\n"
-                    f"🎁 *রিওয়ার্ড:* আপনার রেফারকৃত ইউজার $১ আয় করলে পাবেন *{REFERRAL_BONUS_BDT} BDT* তাৎক্ষণিক বোনাস!"
+                    f"🎁 *রিওয়ার্ড:* আপনার রেফারকৃত ইউজার $১ আয় করলে পাবেন ঠিক *{REFERRAL_BONUS_BDT} BDT* বোনাস!"
                 )
                 send_telegram(chat_id, ref_msg)
 
@@ -249,14 +248,12 @@ def bot_webhook():
                     support_buttons.append([{"text": "📢 Official Group", "url": support_group}])
 
                 reply_markup = {"inline_keyboard": support_buttons} if support_buttons else None
-                
                 sup_msg = (
                     "🎧 *AsrPay Support Center*\n\n"
-                    "আপনার যেকোনো সমস্যা বা অনুসন্ধানের জন্য সরাসরি আমাদের সাথে যোগাযোগ করুন:"
+                    "আপনার যেকোনো সমস্যা বা অনুসন্ধানের জন্য সরাসরি যোগাযোগ করুন:"
                 )
                 send_telegram(chat_id, sup_msg, reply_markup=reply_markup)
 
-            # Handling user entering wallet number (bKash/Nagad) during withdrawal workflow
             elif chat_id in user_wd_state:
                 method = user_wd_state.pop(chat_id)
                 wallet_no = text.strip()
@@ -281,10 +278,8 @@ def bot_webhook():
                     print(f"Wd db error: {e}")
 
                 supabase.from_('users').update({'balance': 0.00}).eq('chat_id', chat_id).execute()
-                
-                send_telegram(chat_id, f"✅ *Withdrawal Request Successful!*\n\n💳 Method: *{method}*\n📱 Number: `{wallet_no}`\n💰 Amount: *${bal:.2f}*\n\nঅ্যাডমিন আপনার রিকোয়েস্টটি চেক করে দ্রুত পেমেন্ট পাঠিয়ে দেবেন।")
+                send_telegram(chat_id, f"✅ *Withdrawal Request Successful!*\n\n💳 Method: *{method}*\n📱 Number: `{wallet_no}`\n💰 Amount: *${bal:.2f}*")
 
-            # Telegram Admin Command (/admin)
             elif text.startswith("/admin"):
                 if str(chat_id) in ADMIN_CHAT_IDS:
                     admin_inline_keyboard = {
@@ -294,7 +289,7 @@ def bot_webhook():
                             [{"text": "📊 Recent OTP Logs", "callback_data": "admin_logs"}]
                         ]
                     }
-                    send_telegram(chat_id, "👑 *AsrPay Telegram Admin Panel*\n\nনিচের অপশনগুলো থেকে আপনার কন্ট্রোল সিলেক্ট করুন:", reply_markup=admin_inline_keyboard)
+                    send_telegram(chat_id, "👑 *AsrPay Telegram Admin Panel*", reply_markup=admin_inline_keyboard)
                 else:
                     send_telegram(chat_id, "❌ আপনার এই প্যানেলটি ব্যবহার করার অনুমতি নেই!")
 
@@ -316,29 +311,29 @@ def bot_webhook():
                     pass
 
                 if bal < MIN_WITHDRAWAL_USD:
-                    send_telegram(chat_id, f"❌ *উইথড্র ব্যর্থ হয়েছে!*\n\nআপনার বর্তমান ব্যালেন্স: *${bal:.2f}*\nসর্বনিম্ন উইথড্র লিমিট: *${MIN_WITHDRAWAL_USD:.2f}*")
+                    send_telegram(chat_id, f"❌ ব্যালেন্স কম আছে! সর্বনিম্ন উইথড্র: *${MIN_WITHDRAWAL_USD:.2f}*")
                 else:
                     method_menu = {
                         "inline_keyboard": [
                             [{"text": "🔴 bKash", "callback_data": "wd_bkash"}, {"text": "🟠 Nagad", "callback_data": "wd_nagad"}]
                         ]
                     }
-                    send_telegram(chat_id, f"💸 *আপনার ব্যালেন্স: ${bal:.2f}*\n\nকোন মাধ্যমে পেমেন্ট নিতে চান তা সিলেক্ট করুন:", reply_markup=method_menu)
+                    send_telegram(chat_id, f"💸 *আপনার ব্যালেন্স: ${bal:.2f}*\n\nপেমেন্ট মাধ্যম সিলেক্ট করুন:", reply_markup=method_menu)
 
             elif data in ["wd_bkash", "wd_nagad"]:
                 method_name = "bKash" if data == "wd_bkash" else "Nagad"
                 user_wd_state[chat_id] = method_name
-                send_telegram(chat_id, f"📱 আপনার *{method_name}* পার্সোনাল বা এজেন্ট নম্বরটি লিখে পাঠান:")
+                send_telegram(chat_id, f"📱 আপনার *{method_name}* নম্বরটি লিখে পাঠান:")
 
             elif data == "admin_on":
                 if str(chat_id) in ADMIN_CHAT_IDS:
                     supabase.from_('settings').upsert({'key': 'service_status', 'value': 'ON'}).execute()
-                    send_telegram(chat_id, "✅ সার্ভিস সফলভাবে চালু (ON) করা হয়েছে!")
+                    send_telegram(chat_id, "✅ সার্ভিস চালু (ON) করা হয়েছে!")
 
             elif data == "admin_off":
                 if str(chat_id) in ADMIN_CHAT_IDS:
                     supabase.from_('settings').upsert({'key': 'service_status', 'value': 'OFF'}).execute()
-                    send_telegram(chat_id, "❌ সার্ভিস সফলভাবে বন্ধ (OFF) করা হয়েছে!")
+                    send_telegram(chat_id, "❌ সার্ভিস বন্ধ (OFF) করা হয়েছে!")
 
             elif data == "admin_users_list":
                 if str(chat_id) in ADMIN_CHAT_IDS:
@@ -348,12 +343,10 @@ def bot_webhook():
                             u_text = "👥 *Registered Users (Last 10):*\n\n"
                             for u in users_res.data:
                                 status_str = "🔴 Banned" if u.get('is_banned') else "🟢 Active"
-                                u_text += f"🆔 `👤 {u.get('chat_id')}`\n💰 Balance: `${float(u.get('balance', 0)):.2f}`\nStatus: {status_str}\n------------------\n"
+                                u_text += f"🆔 `{u.get('chat_id')}`\n💰 Balance: `${float(u.get('balance', 0)):.2f}`\nStatus: {status_str}\n------------------\n"
                             send_telegram(chat_id, u_text)
-                        else:
-                            send_telegram(chat_id, "⚠️ কোনো ইউজার পাওয়া যায়নি।")
                     except Exception as e:
-                        send_telegram(chat_id, f"❌ ইউজার লিস্ট আনতে সমস্যা হয়েছে: {e}")
+                        send_telegram(chat_id, f"❌ Error: {e}")
 
             elif data == "admin_logs":
                 if str(chat_id) in ADMIN_CHAT_IDS:
@@ -362,12 +355,10 @@ def bot_webhook():
                         if logs_res and hasattr(logs_res, 'data') and logs_res.data:
                             log_text = "📊 *Recent OTP Logs (Last 5):*\n\n"
                             for log in logs_res.data:
-                                log_text += f"📱 `{log.get('phone_number')}`\n🌐 {log.get('service')}\n💬 `{log.get('otp_message')}`\nStatus: {log.get('status')}\n------------------\n"
+                                log_text += f"📱 `{log.get('phone_number')}`\n🌐 {log.get('service')}\n💬 `{log.get('otp_message')}`\n------------------\n"
                             send_telegram(chat_id, log_text)
-                        else:
-                            send_telegram(chat_id, "⚠️ কোনো লগ পাওয়া যায়নি।")
                     except Exception as e:
-                        send_telegram(chat_id, f"❌ লগ আনতে সমস্যা হয়েছে: {e}")
+                        send_telegram(chat_id, f"❌ Error: {e}")
 
             elif data.startswith("get_"):
                 if not check_service_status():
@@ -378,7 +369,7 @@ def bot_webhook():
                 send_telegram(chat_id, f"✅ *Selected Service:* `{service}`\n\nঅ্যাডমিন প্যানেল থেকে নম্বর অ্যাসাইন হওয়া পর্যন্ত অপেক্ষা করুন... (মেয়াদ: ৫ মিনিট)")
 
     except Exception as main_e:
-        print(f"Bot Webhook Fatal Error Avoided: {main_e}")
+        print(f"Bot Webhook Error: {main_e}")
 
     return "OK", 200
 
@@ -390,158 +381,57 @@ ADMIN_HTML = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AsrPay Mobile Admin Panel</title>
-    <link href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        * { box-sizing: border-box; font-family: sans-serif; }
         body { background: #0f172a; color: #f8fafc; margin: 0; padding: 10px; }
         .container { max-width: 100%; margin: 0 auto; }
-        .header { background: linear-gradient(135deg, #1e293b, #334155); padding: 15px; border-radius: 12px; border: 1px solid #475569; text-align: center; margin-bottom: 15px; }
+        .header { background: #1e293b; padding: 15px; border-radius: 12px; text-align: center; margin-bottom: 15px; border: 1px solid #334155; }
         .header h1 { margin: 0; font-size: 22px; color: #38bdf8; }
         .card { background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 15px; border: 1px solid #334155; }
-        .card h3 { margin-top: 0; color: #38bdf8; border-bottom: 2px solid #334155; padding-bottom: 8px; font-size: 16px; }
-        .status-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-weight: bold; font-size: 13px; margin-left: 6px; }
-        .status-on { background: #059669; color: #ecfdf5; }
-        .status-off { background: #dc2626; color: #fef2f2; }
-        .btn { display: block; width: 100%; text-align: center; padding: 12px; border-radius: 8px; color: white; text-decoration: none; font-weight: 600; border: none; cursor: pointer; transition: 0.2s; font-size: 14px; margin-top: 8px; }
+        .card h3 { margin-top: 0; color: #38bdf8; border-bottom: 1px solid #334155; padding-bottom: 8px; font-size: 16px; }
+        .btn { display: block; width: 100%; text-align: center; padding: 12px; border-radius: 8px; color: white; text-decoration: none; font-weight: 600; border: none; cursor: pointer; font-size: 14px; margin-top: 8px; }
         .btn-on { background: #10b981; } 
         .btn-off { background: #ef4444; } 
         .btn-primary { background: #0284c7; } 
         .btn-danger { background: #dc2626; padding: 6px 10px; font-size: 12px; display: inline-block; width: auto; }
         .btn-success { background: #059669; padding: 6px 10px; font-size: 12px; display: inline-block; width: auto; }
         input { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #475569; background: #0f172a; color: white; border-radius: 8px; font-size: 14px; }
-        input:focus { border-color: #38bdf8; outline: none; }
-        .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 10px; }
+        .table-responsive { width: 100%; overflow-x: auto; margin-top: 10px; }
         table { width: 100%; border-collapse: collapse; min-width: 300px; }
         th, td { border: 1px solid #334155; padding: 8px; text-align: left; font-size: 12px; white-space: nowrap; }
         th { background: #0f172a; color: #94a3b8; }
-        tr:nth-child(even) { background: #182234; }
-        .badge-success { color: #34d399; font-weight: 600; }
-        .badge-fail { color: #f87171; font-weight: 600; }
     </style>
 </head>
 <body>
-
 <div class="container">
     <div class="header">
         <h1>🚀 AsrPay Mobile Panel</h1>
-        <p style="margin: 4px 0 0 0; color: #94a3b8; font-size: 12px;">Admin Management Dashboard</p>
     </div>
-
-    <!-- Service Switch -->
     <div class="card">
-        <h3>🔴 / 🟢 Service Status</h3>
-        <p style="font-size: 14px;">Status: 
-            <span class="status-badge {{ 'status-on' if status == 'ON' else 'status-off' }}">
-                {{ status }}
-            </span>
-        </p>
+        <h3>Service Status: {{ status }}</h3>
         {% if status == 'ON' %}
             <a href="/admin/toggle-service/OFF" class="btn btn-off">Turn OFF Service</a>
         {% else %}
             <a href="/admin/toggle-service/ON" class="btn btn-on">Turn ON Service</a>
         {% endif %}
     </div>
-
-    <!-- User Management & Balance/Ban Control -->
     <div class="card">
-        <h3>👥 User Management</h3>
+        <h3>User Balance Management</h3>
         <form action="/admin/manage-user" method="POST">
-            <input type="text" name="chat_id" placeholder="User Telegram Chat ID" required>
-            <input type="number" step="0.01" name="amount" placeholder="Amount (+ Add or - Minus, e.g. 1.50)" required>
-            <button type="submit" class="btn btn-primary">Update Balance & Notify</button>
+            <input type="text" name="chat_id" placeholder="Telegram Chat ID" required>
+            <input type="number" step="0.01" name="amount" placeholder="Amount (+ or -)" required>
+            <button type="submit" class="btn btn-primary">Update Balance</button>
         </form>
-
-        <h4 style="color: #38bdf8; margin-top: 15px; font-size: 14px;">Users List & Ban Control</h4>
-        <div class="table-responsive">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Chat ID</th>
-                        <th>Balance</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for user in users %}
-                    <tr>
-                        <td><code>{{ user.chat_id }}</code></td>
-                        <td>${{ "%.2f"|format(user.balance|float) }}</td>
-                        <td>
-                            {% if user.is_banned %}
-                                <span class="badge-fail">Banned</span>
-                            {% else %}
-                                <span class="badge-success">Active</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if user.is_banned %}
-                                <a href="/admin/unban/{{ user.chat_id }}" class="btn-success btn">Unban</a>
-                            {% else %}
-                                <a href="/admin/ban/{{ user.chat_id }}" class="btn-danger btn">Ban</a>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="4" style="text-align: center; color: #64748b;">No users found.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
     </div>
-
-    <!-- Assign Number Section -->
     <div class="card">
-        <h3>📱 Assign Number</h3>
+        <h3>Assign Number</h3>
         <form action="/admin/assign-number" method="POST">
-            <input type="text" name="phone_number" placeholder="Phone Number (+8801XXXXXXXXX)" required>
-            <input type="text" name="chat_id" placeholder="User Telegram Chat ID" required>
-            <button type="submit" class="btn btn-primary">Assign Number (5 Min)</button>
+            <input type="text" name="phone_number" placeholder="Phone Number" required>
+            <input type="text" name="chat_id" placeholder="Telegram Chat ID" required>
+            <button type="submit" class="btn btn-primary">Assign Number</button>
         </form>
-    </div>
-
-    <!-- OTP History -->
-    <div class="card">
-        <h3>📩 Recent OTP Logs</h3>
-        <div class="table-responsive">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Chat ID</th>
-                        <th>Number</th>
-                        <th>Service</th>
-                        <th>OTP</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for log in logs %}
-                    <tr>
-                        <td><code>{{ log.chat_id }}</code></td>
-                        <td><code>{{ log.phone_number }}</code></td>
-                        <td>{{ log.service }}</td>
-                        <td><code>{{ log.otp_message }}</code></td>
-                        <td>
-                            {% if log.status == 'delivered' %}
-                                <span class="badge-success">OK</span>
-                            {% else %}
-                                <span class="badge-fail">{{ log.status }}</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="5" style="text-align: center; color: #64748b;">No logs found.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
     </div>
 </div>
-
 </body>
 </html>
 """
@@ -549,98 +439,34 @@ ADMIN_HTML = """
 @app.route('/admin')
 def admin_panel():
     status = get_setting('service_status', 'ON')
-    
-    logs = []
-    try:
-        logs_res = supabase.from_('otp_logs').select('*').order('id', desc=True).limit(10).execute()
-        if logs_res and hasattr(logs_res, 'data') and logs_res.data:
-            logs = logs_res.data
-    except Exception:
-        logs = []
-
-    users = []
-    try:
-        users_res = supabase.from_('users').select('*').limit(20).execute()
-        if users_res and hasattr(users_res, 'data') and users_res.data:
-            users = users_res.data
-    except Exception:
-        users = []
-
-    return render_template_string(
-        ADMIN_HTML, 
-        status=status, 
-        logs=logs,
-        users=users
-    )
+    return render_template_string(ADMIN_HTML, status=status)
 
 @app.route('/admin/toggle-service/<state>')
 def toggle_service(state):
-    try:
-        supabase.from_('settings').upsert({'key': 'service_status', 'value': state}).execute()
-    except Exception as e:
-        print(f"Toggle error: {e}")
-    return f"Service status changed to {state}! <br><a href='/admin'>Go Back</a>"
+    supabase.from_('settings').upsert({'key': 'service_status', 'value': state}).execute()
+    return f"Status updated to {state}! <br><a href='/admin'>Go Back</a>"
 
 @app.route('/admin/manage-user', methods=['POST'])
 def manage_user():
     chat_id = request.form.get('chat_id', '').strip()
-    try:
-        amount = float(request.form.get('amount', '0'))
-    except ValueError:
-        amount = 0.0
-
-    try:
-        res = supabase.from_('users').select('balance').eq('chat_id', chat_id).execute()
-        if res and hasattr(res, 'data') and res.data:
-            curr_bal = float(res.data[0].get('balance', 0.0))
-            new_bal = curr_bal + amount
-            supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
-
-            if amount > 0:
-                send_telegram(chat_id, f"🎉 *Congrats!* আপনার অ্যাকাউন্টে নতুন ক্যাশ যোগ করা হয়েছে!\n\n💰 যুক্ত হয়েছে: `+${amount:.2f}`\n💳 মোট ব্যালেন্স: `${new_bal:.2f}`")
-            elif amount < 0:
-                send_telegram(chat_id, f"⚠️ *Balance Update Notice!*\n\nআপনার অ্যাকাউন্ট থেকে ব্যালেন্স মাইনাস করা হয়েছে: `- ${abs(amount):.2f}`\n💳 বর্তমান ব্যালেন্স: `${new_bal:.2f}`")
-    except Exception as e:
-        print(f"Manage user error: {e}")
-
-    return "User balance updated successfully! <br><a href='/admin'>Go Back</a>"
-
-@app.route('/admin/ban/<chat_id>')
-def ban_user(chat_id):
-    try:
-        supabase.from_('users').update({'is_banned': True}).eq('chat_id', chat_id).execute()
-        send_telegram(chat_id, "❌ *আপনার এই প্যানেলটি ব্যবহার করার অনুমতি নেই!*")
-    except Exception as e:
-        print(f"Ban error: {e}")
-    return f"User {chat_id} banned successfully! <br><a href='/admin'>Go Back</a>"
-
-@app.route('/admin/unban/<chat_id>')
-def unban_user(chat_id):
-    try:
-        supabase.from_('users').update({'is_banned': False}).eq('chat_id', chat_id).execute()
-        send_telegram(chat_id, "✅ আপনার অ্যাকাউন্টটি আবার সচল করা হয়েছে! আপনি এখন বট ব্যবহার করতে পারবেন।")
-    except Exception as e:
-        print(f"Unban error: {e}")
-    return f"User {chat_id} unbanned successfully! <br><a href='/admin'>Go Back</a>"
+    amount = float(request.form.get('amount', '0'))
+    res = supabase.from_('users').select('balance').eq('chat_id', chat_id).execute()
+    if res and res.data:
+        new_bal = float(res.data[0].get('balance', 0.0)) + amount
+        supabase.from_('users').update({'balance': new_bal}).eq('chat_id', chat_id).execute()
+        send_telegram(chat_id, f"💳 আপনার অ্যাকাউন্টে ব্যালেন্স আপডেট হয়েছে। নতুন ব্যালেন্স: `${new_bal:.2f}`")
+    return "Updated! <br><a href='/admin'>Go Back</a>"
 
 @app.route('/admin/assign-number', methods=['POST'])
 def assign_number():
     phone_number = request.form.get('phone_number', '').strip()
     chat_id = request.form.get('chat_id', '').strip()
     now_iso = datetime.now(timezone.utc).isoformat()
-
-    try:
-        supabase.from_('numbers').upsert({
-            'phone_number': phone_number, 
-            'chat_id': chat_id,
-            'assigned_at': now_iso
-        }).execute()
-        send_telegram(chat_id, f"📱 *[AsrPay] New Number Assigned!*\n\nYour Phone Number: `{phone_number}`\n⏰ *Time Limit:* 5 Minutes.")
-    except Exception as e:
-        print(f"Assign error: {e}")
-
-    return "Number Assigned successfully! <br><a href='/admin'>Go Back</a>"
+    supabase.from_('numbers').upsert({'phone_number': phone_number, 'chat_id': chat_id, 'assigned_at': now_iso}).execute()
+    send_telegram(chat_id, f"📱 *New Number Assigned:* `{phone_number}` (Valid for 5 Mins)")
+    return "Assigned! <br><a href='/admin'>Go Back</a>"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, threaded=True)
+
