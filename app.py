@@ -81,7 +81,6 @@ def bot_webhook():
         }
 
         if text.startswith("/start"):
-            # ইউজার স্টার্ট করলে ইউজারের রেকর্ড সেভ করে রাখা
             try:
                 user_check = supabase.table('users').select('chat_id').eq('chat_id', chat_id).execute()
                 if not user_check.data:
@@ -129,6 +128,7 @@ def bot_webhook():
                 buttons = []
                 if c_res and c_res.data:
                     for c in c_res.data:
+                        # ইউজারের বটে কান্ট্রির সাথে অ্যাডমিন সেট করা রেট শো করবে
                         buttons.append([{"text": f"🌍 {c['country_name']} (${c['rate']})", "callback_data": f"getnum_{sec_name}_{c['country_name']}"}])
                 if buttons:
                     send_telegram(chat_id, f"🌍 *Select Country for {sec_name}:*", reply_markup={"inline_keyboard": buttons})
@@ -154,19 +154,19 @@ def bot_webhook():
                     
                     send_telegram(chat_id, f"📱 *Number Assigned:* `{phone}`\n💵 Rate: `${rate}`")
                 else:
-                    send_telegram(chat_id, "⚠️ এই মুহূর্তে এই কান্ট্রিতে কোনো নম্বর খালি নেই।")
+                    send_telegram(chat_id, "⚠️ এই মুহূর্তে এই কান্টிரিতে কোনো নম্বর খালি নেই।")
             except Exception as e:
                 send_telegram(chat_id, f"Error: {e}")
     return "ok", 200
 
-# ------------------- ADVANCED HTML ADMIN PANEL -------------------
+# ------------------- HTML ADMIN PANEL -------------------
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AsrPay Master Admin Dashboard</title>
+    <title>AsrPay Admin Panel</title>
     <style>
         body { background: #0f172a; color: #f8fafc; font-family: Arial, sans-serif; margin: 0; padding: 15px; }
         .container { max-width: 1000px; margin: auto; }
@@ -184,27 +184,27 @@ ADMIN_HTML = """
 </head>
 <body>
     <div class="container">
-        <h2>👑 AsrPay Master Admin Dashboard</h2>
+        <h2>👑 AsrPay Admin Dashboard</h2>
         
-        <!-- 1. Add Numbers & Structure -->
+        <!-- 1. Add Numbers, Section, Country & Rate -->
         <div class="card">
-            <h3>📦 Add Section, Country & Numbers</h3>
+            <h3>📦 Add Section, Country, Rate & Numbers</h3>
             <form action="/admin/bulk-add" method="POST">
                 <label>Section Name:</label>
-                <input type="text" name="section_name" placeholder="e.g. Social Media" required>
+                <input type="text" name="section_name" placeholder="e.g. Telegram / Gmail" required>
                 <label>Country Name:</label>
                 <input type="text" name="country_name" placeholder="e.g. USA" required>
-                <label>Rate per SMS (USD):</label>
+                <label>Rate per SMS (USD) [ইউজার বোট থেকে নিলে এই রেট যোগ হবে]:</label>
                 <input type="number" step="0.01" name="rate" placeholder="0.05" required>
-                <label>Numbers List (কমা বা নতুন লাইনে দিন):</label>
+                <label>Numbers List (প্রতি লাইনে একটি করে নম্বর):</label>
                 <textarea name="numbers_list" rows="4" placeholder="+123456789\n+198765432" required></textarea>
                 <button class="btn">Upload Numbers</button>
             </form>
         </div>
 
-        <!-- 2. Delete Sections / Countries -->
+        <!-- 2. Delete Section -->
         <div class="card">
-            <h3>🗑️ Delete Section & Country</h3>
+            <h3>🗑️ Delete Section</h3>
             <form action="/admin/delete-structure" method="POST">
                 <label>Select Section to Delete:</label>
                 <select name="section_name" required>
@@ -213,9 +213,7 @@ ADMIN_HTML = """
                     <option value="{{ s.section_name }}">{{ s.section_name }}</option>
                     {% endfor %}
                 </select>
-                <label>Country Name (ঐচ্ছিক: পুরো সেকশন মুছতে চাইলে খালি রাখুন):</label>
-                <input type="text" name="country_name" placeholder="e.g. USA (Leave blank to delete entire section)">
-                <button class="btn-danger" style="width:100%; padding:12px; font-weight:bold;">Delete Section/Country</button>
+                <button class="btn-danger" style="width:100%; padding:12px; font-weight:bold; margin-top:10px;">Delete Section & All Related Data</button>
             </form>
         </div>
 
@@ -235,7 +233,7 @@ ADMIN_HTML = """
                     <td>
                         <form action="/admin/update-balance" method="POST" style="display:flex; gap:10px; margin:0;">
                             <input type="hidden" name="chat_id" value="{{ u.chat_id }}">
-                            <input type="number" step="0.01" name="amount" placeholder="e.g. +1.50 or -0.50" required style="margin:0;">
+                            <input type="number" step="0.01" name="amount" placeholder="+1.50 বা -0.50" required style="margin:0;">
                             <button class="btn" style="width:120px; padding:6px;">Update</button>
                         </form>
                     </td>
@@ -244,7 +242,7 @@ ADMIN_HTML = """
             </table>
         </div>
 
-        <!-- 4. Manage Numbers Pool -->
+        <!-- 4. Numbers Pool & Delete Numbers -->
         <div class="card">
             <h3>📋 Numbers Pool (Delete Numbers)</h3>
             <table>
@@ -348,17 +346,10 @@ def update_balance():
 @app.route('/admin/delete-structure', methods=['POST'])
 def delete_structure():
     sec = request.form.get('section_name', '').strip()
-    cou = request.form.get('country_name', '').strip()
     try:
-        if cou:
-            # শুধু নির্দিষ্ট কান্ট্রি এবং ওই কান্ট্রির নম্বরগুলো ডিলিট করবে
-            supabase.table('countries').delete().eq('section_name', sec).eq('country_name', cou).execute()
-            supabase.table('numbers_pool').delete().eq('section', sec).eq('country', cou).execute()
-        else:
-            # পুরো সেকশন, তার কান্ট্রি এবং সেকশনের সব নম্বর ডিলিট করবে
-            supabase.table('countries').delete().eq('section_name', sec).execute()
-            supabase.table('numbers_pool').delete().eq('section', sec).execute()
-            supabase.table('sections').delete().eq('section_name', sec).execute()
+        supabase.table('countries').delete().eq('section_name', sec).execute()
+        supabase.table('numbers_pool').delete().eq('section', sec).execute()
+        supabase.table('sections').delete().eq('section_name', sec).execute()
     except Exception as e:
         print(f"Error: {e}")
     return redirect(url_for('admin_dashboard'))
@@ -366,3 +357,4 @@ def delete_structure():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
